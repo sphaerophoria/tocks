@@ -1,0 +1,6 @@
+[submodule "toxcore-sys/c-toxcore"]
+	path = toxcore-sys/c-toxcore
+	url = https://github.com/toktok/c-toxcore
+[submodule "toxcore-sys/src/c-toxcore"]
+	path = toxcore-sys/src/c-toxcore
+	url = https://github.com/toktok/c-toxcore
