@@ -1,0 +1,20 @@
+[package]
+name = "toxcore"
+version = "0.1.0"
+authors = ["Mick Sayson <mick@sayson.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3.13"
+hex = "0.4.3"
+lazy_static = "1.4.0"
+log = "0.4.14"
+mockall = "0.9.1"
+paste = "1.0.4"
+pretty_env_logger = "0.4.0"
+structopt = "0.3.21"
+thiserror = "1.0.24"
+tokio = { version = "1.2.0", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
+toxcore-sys = { path = "../toxcore-sys"}
