@@ -1,0 +1,18 @@
+[package]
+name = "ui"
+version = "0.1.0"
+authors = ["Mick Sayson <mick@sayson.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3.13"
+log = "0.4.14"
+qmetaobject = "0.1.4"
+tocks = { path = "../tocks" }
+tokio = "1.2.0"
+toxcore = { path = "../toxcore" }
+
+[build-dependencies]
+cpp_build = "0.5.6"

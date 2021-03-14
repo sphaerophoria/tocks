@@ -3,4 +3,7 @@
 members = [
 	"toxcore-sys",
 	"toxcore",
+	"tocks",
+	"ui",
+	"app",
 ]
