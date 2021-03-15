@@ -1,11 +1,9 @@
 use structopt::StructOpt;
-use toxcore::{Friend, FriendRequest, Message, PublicKey, SaveData, Tox};
+use toxcore::{Friend, Message, PublicKey, SaveData};
 
 use tokio::sync::broadcast::Receiver;
 
 use futures::FutureExt;
-
-use std::sync::{Arc, RwLock};
 
 #[derive(Debug, StructOpt)]
 enum Options {

@@ -162,6 +162,7 @@ struct ToxData {
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
+/// Wrapper struct to be fed to tox_iterate
 struct CallbackData<'a, Api: ToxApi> {
     api: &'a Api,
     data: &'a mut ToxData,
@@ -192,6 +193,10 @@ impl<Api: ToxApi> ToxImpl<Api> {
             api.callback_friend_request(sys_tox, Some(tox_friend_request_callback::<Api>));
             api.callback_friend_message(sys_tox, Some(tox_friend_message_callback::<Api>));
         }
+
+        // FIXME: friends should be initialized here and only accessed later,
+        // initializing during a call to retrieve the friends seems a little
+        // strange
 
         ToxImpl {
             api: api,
