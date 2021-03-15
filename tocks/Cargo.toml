@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 futures = "0.3.13"
+lazy_static = "1.4.0"
 log = "0.4.14"
 platform-dirs = "0.3.0"
 thiserror = "1.0.24"
