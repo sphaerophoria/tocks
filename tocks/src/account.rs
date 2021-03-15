@@ -222,6 +222,52 @@ impl Account {
     }
 }
 
+pub(crate) struct AccountManager
+{
+    accounts: HashMap<PublicKey, Account>,
+}
+
+impl AccountManager
+{
+    pub fn new() -> AccountManager {
+        AccountManager {
+            accounts: HashMap::new(),
+        }
+    }
+
+    pub fn add_account(&mut self, account: Account) -> &Account
+    {
+        let public_key = account.data().public_key().clone();
+        self.accounts.insert(public_key.clone(), account);
+        &self.accounts[&public_key]
+    }
+
+    pub fn get(&self, public_key: &PublicKey) -> Option<&Account>
+    {
+        self.accounts.get(public_key)
+    }
+
+    pub fn get_mut(&mut self, public_key: &PublicKey) -> Option<&mut Account>
+    {
+        self.accounts.get_mut(public_key)
+    }
+
+    pub async fn run<'a>(&'a mut self) -> Event<'a>
+    {
+        let account_events = if self.accounts.is_empty() {
+            // futures::future::select_all is not happy with 0 elements
+            futures::future::pending().boxed()
+        } else {
+            futures::future::select_all(self.accounts.values_mut().map(|ac| ac.run().boxed())).boxed()
+        };
+
+        // select_all returns a list of all remaining events as the second
+        // element. We don't care about the accounts where nothing happened,
+        // we'll catch those next time
+        account_events.await.0
+    }
+}
+
 pub fn retrieve_account_list() -> Result<Vec<String>> {
     let mut accounts: Vec<String> = fs::read_dir(&*TOX_SAVE_DIR)?
         .filter(|entry| entry.is_ok())

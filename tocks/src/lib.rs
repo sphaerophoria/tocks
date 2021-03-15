@@ -13,7 +13,7 @@ pub use crate::{
     error::{Error, Result},
 };
 
-use crate::{account::Account, contact::FriendData};
+use crate::{account::{Account, AccountManager}, contact::FriendData};
 
 use toxcore::{FriendRequest, PublicKey};
 
@@ -60,11 +60,9 @@ enum Event<'a> {
     None,
 }
 
-type AccountStorage = HashMap<PublicKey, Account>;
-
 pub struct Tocks {
     _appdirs: AppDirs,
-    accounts: AccountStorage,
+    account_manager: AccountManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
     tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
 }
@@ -77,7 +75,7 @@ impl Tocks {
 
         let tocks = Tocks {
             _appdirs: AppDirs::new(Some("tocks"), false).unwrap(),
-            accounts: HashMap::new(),
+            account_manager: AccountManager::new(),
             ui_event_rx,
             tocks_event_tx,
         };
@@ -95,9 +93,9 @@ impl Tocks {
         loop {
             // Split struct for easier reference management
             let ui_event_rx = &mut self.ui_event_rx;
-            let account = &mut self.accounts;
+            let account_manager = &mut self.account_manager;
 
-            match Self::next_event(account, ui_event_rx).await {
+            match Self::next_event(account_manager, ui_event_rx).await {
                 Event::Ui(request) => match self.handle_ui_request(request) {
                     Ok(true) => return,
                     Ok(false) => (),
@@ -135,7 +133,7 @@ impl Tocks {
 
                 let account = Account::create()?;
                 let account_data = account.data().clone();
-                Self::add_account(&mut self.accounts, account);
+                self.account_manager.add_account(account);
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
@@ -143,7 +141,7 @@ impl Tocks {
                 );
             }
             TocksUiEvent::AddFriendByPublicKey(self_address, friend_address) => {
-                let account = self.accounts.get_mut(&self_address);
+                let account = self.account_manager.get_mut(&self_address);
 
                 match account {
                     Some(account) => {
@@ -164,7 +162,7 @@ impl Tocks {
             }
             TocksUiEvent::Login(account_name, password) => {
                 let account = Account::from_account_name(account_name, password)?;
-                let account = Self::add_account(&mut self.accounts, account);
+                let account = self.account_manager.add_account(account);
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
@@ -179,7 +177,7 @@ impl Tocks {
                 }
             }
             TocksUiEvent::ChatViewRequested(account, public_key) => {
-                let account = self.accounts.get(&account);
+                let account = self.account_manager.get(&account);
 
                 let friend_data = account
                     .and_then(|account| account.friends().get(&public_key))
@@ -198,7 +196,7 @@ impl Tocks {
                 }
             }
             TocksUiEvent::MessageSent(account_key, friend_key, message) => {
-                let account = self.accounts.get_mut(&account_key);
+                let account = self.account_manager.get_mut(&account_key);
 
                 if let Some(account) = account {
                     account.send_message(&friend_key, message)?;
@@ -217,23 +215,10 @@ impl Tocks {
         let _ = tocks_event_tx.send(event);
     }
 
-    fn add_account(accounts: &mut AccountStorage, account: Account) -> &Account {
-        let public_key = account.data().public_key().clone();
-        accounts.insert(public_key.clone(), account);
-        &accounts[&public_key]
-    }
-
     async fn next_event<'a>(
-        accounts: &'a mut HashMap<PublicKey, Account>,
+        accounts: &'a mut AccountManager,
         ui_events: &mut mpsc::UnboundedReceiver<TocksUiEvent>,
     ) -> Event<'a> {
-        let account_events = if accounts.is_empty() {
-            // futures::future::select_all is not happy with 0 elements
-            futures::future::pending().boxed()
-        } else {
-            futures::future::select_all(accounts.values_mut().map(|ac| ac.run().boxed())).boxed()
-        };
-
         let event = tokio::select! {
             request = ui_events.recv() => {
                 match request {
@@ -244,13 +229,7 @@ impl Tocks {
                     },
                 }
             },
-            event = account_events => {
-                // Select all will return a tuple of the result + the
-                // remaining. We'll retrieve the remaining ourselves
-                // next iteration so we only need to extract the value
-                // that actually resolved
-                event.0
-            }
+            event = accounts.run() => { event }
         };
 
         event
