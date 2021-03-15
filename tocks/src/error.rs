@@ -8,7 +8,7 @@ use std::sync::PoisonError;
 pub enum Error {
     ToxBuildError(#[from] ToxBuilderCreationError),
     ToxCreationError(#[from] ToxCreationError),
-    ToxAddFriendError(#[from] ToxFriendError),
+    ToxAddFriendError(#[from] ToxAddFriendError),
     ToxFriendSendMessageError(#[from] ToxSendMessageError),
     // Early convert the poison error to avoid the lifetime issues with holding
     // the internal guard

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use toxcore_sys::*;
+
 #[derive(Error, Debug)]
 #[error("Not enough memory")]
 pub struct ToxBuilderCreationError;
@@ -29,7 +31,7 @@ pub enum ToxCreationError {
 }
 
 #[derive(Error, Debug)]
-pub enum ToxFriendError {
+pub enum ToxAddFriendError {
     #[error("Invalid key")]
     InvalidKey,
     #[error("Unexpected null argument")]
@@ -50,8 +52,45 @@ pub enum ToxFriendError {
     Malloc,
     #[error("Unknown friend add error")]
     Unknown,
-    #[error("Failure to retrieve public key")]
-    PublicKey,
+    #[error("{0}")]
+    QueryError(#[from] ToxFriendQueryError),
+}
+
+impl From<u32> for ToxAddFriendError {
+    fn from(err: u32) -> ToxAddFriendError {
+        match err {
+            TOX_ERR_FRIEND_ADD_NULL => return ToxAddFriendError::NullArgument,
+            TOX_ERR_FRIEND_ADD_TOO_LONG => return ToxAddFriendError::MessageTooLong,
+            TOX_ERR_FRIEND_ADD_NO_MESSAGE => return ToxAddFriendError::MessageEmpty,
+            TOX_ERR_FRIEND_ADD_OWN_KEY => return ToxAddFriendError::AddSelf,
+            TOX_ERR_FRIEND_ADD_ALREADY_SENT => return ToxAddFriendError::AlreadySent,
+            TOX_ERR_FRIEND_ADD_BAD_CHECKSUM => return ToxAddFriendError::BadChecksum,
+            TOX_ERR_FRIEND_ADD_SET_NEW_NOSPAM => return ToxAddFriendError::NewNospam,
+            TOX_ERR_FRIEND_ADD_MALLOC => return ToxAddFriendError::Malloc,
+            _ => return ToxAddFriendError::Unknown,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ToxFriendQueryError
+{
+    #[error("Invalid argument")]
+    InvalidArgument,
+    #[error("Friend not found")]
+    NotFound,
+    #[error("Unknown friend query error")]
+    Unknown,
+}
+
+impl From<u32> for ToxFriendQueryError {
+    fn from(err: u32) -> ToxFriendQueryError {
+        match err {
+            TOX_ERR_FRIEND_QUERY_NULL => ToxFriendQueryError::InvalidArgument,
+            TOX_ERR_FRIEND_QUERY_FRIEND_NOT_FOUND => ToxFriendQueryError::NotFound,
+            _ => ToxFriendQueryError::Unknown,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -72,6 +111,20 @@ pub enum ToxSendMessageError {
     MessageEmpty,
     #[error("Unknown")]
     Unknown,
+}
+
+impl From<u32> for ToxSendMessageError {
+    fn from(err: u32) -> ToxSendMessageError {
+        match err {
+            TOX_ERR_FRIEND_SEND_MESSAGE_NULL => ToxSendMessageError::InvalidArgument,
+            TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_FOUND => ToxSendMessageError::InvalidFriendId,
+            TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_CONNECTED => ToxSendMessageError::NotConnected,
+            TOX_ERR_FRIEND_SEND_MESSAGE_SENDQ => ToxSendMessageError::InternalError,
+            TOX_ERR_FRIEND_SEND_MESSAGE_TOO_LONG => ToxSendMessageError::MessageTooLong,
+            TOX_ERR_FRIEND_SEND_MESSAGE_EMPTY => ToxSendMessageError::MessageEmpty,
+            _ => ToxSendMessageError::Unknown,
+        }
+    }
 }
 
 #[derive(Error, Debug)]

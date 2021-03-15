@@ -106,7 +106,7 @@ impl Tox {
     }
 
     /// Retrieves all added toxcore friends
-    pub fn friends(&mut self) -> Result<Vec<Friend>, ToxFriendError> {
+    pub fn friends(&mut self) -> Result<Vec<Friend>, ToxAddFriendError> {
         self.inner.friends()
     }
 
@@ -121,7 +121,7 @@ impl Tox {
     pub fn add_friend_norequest(
         &mut self,
         public_key: &PublicKey,
-    ) -> Result<Friend, ToxFriendError> {
+    ) -> Result<Friend, ToxAddFriendError> {
         self.inner.add_friend_norequest(public_key)
     }
 
@@ -250,7 +250,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
         }
     }
 
-    pub fn friends(&mut self) -> Result<Vec<Friend>, ToxFriendError> {
+    pub fn friends(&mut self) -> Result<Vec<Friend>, ToxAddFriendError> {
         unsafe {
             let friend_indexes = {
                 let length = self.api.self_get_friend_list_size(self.sys_tox.get()) as usize;
@@ -279,13 +279,13 @@ impl<Api: ToxApi> ToxImpl<Api> {
     pub fn add_friend_norequest(
         &mut self,
         public_key: &PublicKey,
-    ) -> Result<Friend, ToxFriendError> {
+    ) -> Result<Friend, ToxAddFriendError> {
         unsafe {
-            let mut err: TOX_ERR_FRIEND_ADD = TOX_ERR_FRIEND_ADD_OK;
+            let mut err = TOX_ERR_FRIEND_ADD_OK;
 
             let friend_num = {
                 if public_key.key.len() != self.api.public_key_size() as usize {
-                    return Err(ToxFriendError::InvalidKey);
+                    return Err(ToxAddFriendError::InvalidKey);
                 }
 
                 self.api.friend_add_norequest(
@@ -295,17 +295,8 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 )
             };
 
-            match err {
-                TOX_ERR_FRIEND_ADD_OK => (),
-                TOX_ERR_FRIEND_ADD_NULL => return Err(ToxFriendError::NullArgument),
-                TOX_ERR_FRIEND_ADD_TOO_LONG => return Err(ToxFriendError::MessageTooLong),
-                TOX_ERR_FRIEND_ADD_NO_MESSAGE => return Err(ToxFriendError::MessageEmpty),
-                TOX_ERR_FRIEND_ADD_OWN_KEY => return Err(ToxFriendError::AddSelf),
-                TOX_ERR_FRIEND_ADD_ALREADY_SENT => return Err(ToxFriendError::AlreadySent),
-                TOX_ERR_FRIEND_ADD_BAD_CHECKSUM => return Err(ToxFriendError::BadChecksum),
-                TOX_ERR_FRIEND_ADD_SET_NEW_NOSPAM => return Err(ToxFriendError::NewNospam),
-                TOX_ERR_FRIEND_ADD_MALLOC => return Err(ToxFriendError::Malloc),
-                _ => return Err(ToxFriendError::Unknown),
+            if err != TOX_ERR_FRIEND_ADD_OK {
+                return Err(ToxAddFriendError::from(err));
             }
 
             self.friend_from_id(friend_num)
@@ -348,24 +339,15 @@ impl<Api: ToxApi> ToxImpl<Api> {
             )
         };
 
-        match err {
-            TOX_ERR_FRIEND_SEND_MESSAGE_OK => Ok(Receipt { id: receipt_id }),
-            TOX_ERR_FRIEND_SEND_MESSAGE_NULL => Err(ToxSendMessageError::InvalidArgument),
-            TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_FOUND => {
-                Err(ToxSendMessageError::InvalidFriendId)
-            }
-            TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_CONNECTED => {
-                Err(ToxSendMessageError::NotConnected)
-            }
-            TOX_ERR_FRIEND_SEND_MESSAGE_SENDQ => Err(ToxSendMessageError::InternalError),
-            TOX_ERR_FRIEND_SEND_MESSAGE_TOO_LONG => Err(ToxSendMessageError::MessageTooLong),
-            TOX_ERR_FRIEND_SEND_MESSAGE_EMPTY => Err(ToxSendMessageError::MessageEmpty),
-            _ => Err(ToxSendMessageError::Unknown),
+        if err != TOX_ERR_FRIEND_SEND_MESSAGE_OK {
+            return Err(ToxSendMessageError::from(err));
         }
+
+        Ok(Receipt{ id: receipt_id })
     }
 
     /// Calls into toxcore to get the public key for the provided friend id
-    fn public_key_from_id(&self, id: u32) -> Result<PublicKey, ToxFriendError> {
+    fn public_key_from_id(&self, id: u32) -> Result<PublicKey, ToxFriendQueryError> {
         unsafe {
             let length = self.api.public_key_size() as usize;
             let mut public_key = Vec::with_capacity(length);
@@ -373,12 +355,18 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 self.sys_tox.get(),
                 id,
                 public_key.as_mut_ptr(),
+                // For this API there is only one possible failure, we'll use
+                // the return value instead
                 std::ptr::null_mut(),
             );
             public_key.set_len(length);
 
             if !success {
-                return Err(ToxFriendError::PublicKey);
+                // NOTE: This isn't a 100% correct mapping from toxcore -> rust
+                // errors, but the only possible failure from toxcore is that
+                // the friend didn't exist, which really fits into the
+                // ToxFriendQueryError enum conceptually
+                return Err(ToxFriendQueryError::NotFound);
             }
 
             Ok(PublicKey { key: public_key })
@@ -386,7 +374,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
     }
 
     /// Calls into toxcore to get the name for the provided friend id
-    fn name_from_id(&self, id: u32) -> Result<String, ToxFriendError> {
+    fn name_from_id(&self, id: u32) -> Result<String, ToxFriendQueryError> {
         unsafe {
             let mut err = TOX_ERR_FRIEND_QUERY_OK;
 
@@ -395,15 +383,27 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 id,
                 &mut err as *mut TOX_ERR_FRIEND_QUERY,
             ) as usize;
+
+            if err != TOX_ERR_FRIEND_QUERY_OK {
+                return Err(ToxFriendQueryError::from(err));
+            }
+
             let mut name = Vec::with_capacity(length);
-            // FIXME: handle the errors gracefully
-            let success = self.api.friend_get_name(
+
+            // Ignore return value since the error output will indicate the same thing
+            let _success = self.api.friend_get_name(
                 self.sys_tox.get(),
                 id,
                 name.as_mut_ptr(),
-                std::ptr::null_mut(),
+                &mut err as *mut TOX_ERR_FRIEND_QUERY,
             );
+
+            if err != TOX_ERR_FRIEND_QUERY_OK {
+                return Err(ToxFriendQueryError::from(err));
+            }
+
             name.set_len(length);
+
             Ok(String::from_utf8_lossy(&name).to_string())
         }
     }
@@ -411,7 +411,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
     /// Creates a [`Friend`], populating the data in [`ToxData::friend_data`] if necessary.
     ///
     /// If [`ToxData::friend_data`] already exists the data in it will be overwritten
-    fn friend_from_id(&mut self, id: u32) -> Result<Friend, ToxFriendError> {
+    fn friend_from_id(&mut self, id: u32) -> Result<Friend, ToxAddFriendError> {
         // If it exists we have to update the existing fields, otherwise we have to create with correct fields, either way we need to get the fields
 
         if let Some(existing_data) = self.data.friend_data.get(&id) {
