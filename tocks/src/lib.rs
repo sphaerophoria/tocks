@@ -401,10 +401,14 @@ impl Account {
     fn add_friend_publickey(&mut self, friend_key: &PublicKey) -> Result<()> {
         // FIXME: eventually need to sync state with toxcore, re-add from DB etc.
         let f = self.tox.add_friend_norequest(&friend_key)?;
-        self.friends.insert(f.public_key(), f.clone());
-        self.chatrooms.insert(f.public_key(), ChatRoom::new());
+        let public_key = f.public_key();
+
+        self.friends.insert(public_key.clone(), f);
+        let f = &self.friends[&public_key];
+
+        self.chatrooms.insert(public_key.clone(), ChatRoom::new());
         self.incoming_messages
-            .insert(f.public_key(), self.tox.incoming_friend_messages(&f));
+            .insert(public_key, self.tox.incoming_friend_messages(&f));
 
         Ok(())
     }
