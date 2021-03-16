@@ -7,13 +7,13 @@ ColumnLayout {
 
     property var account
 
-    signal friendSelected(string public_key);
+    signal chatSelected(int chat_id);
 
     Connections {
         target: tocks
 
-        function onFriendAdded(account, friend) {
-            if (root.account.publicKey !== account.publicKey) {
+        function onFriendAdded(accountId, friend) {
+            if (root.account.id !== account.id) {
                 return
             }
 
@@ -27,7 +27,7 @@ ColumnLayout {
         ListView {
             id: friendList
             onCurrentItemChanged: {
-                root.friendSelected(friendModel.get(currentIndex).publicKey)
+                root.chatSelected(friendModel.get(currentIndex).chatId)
             }
 
             model: ListModel {

@@ -7,13 +7,13 @@ ScrollView {
     ListView {
         id: root
 
-        Layout.fillWidth: true
-        Layout.fillHeight: true
+        anchors.fill: parent
 
         // Global chatModel defined in rust
         model: chatModel
         delegate: Text {
             text: model.display
+            wrapMode: Text.Wrap
         }
     }
 }

@@ -1,20 +1,23 @@
 use qmetaobject::*;
+use tocks::Friend as TocksFriend;
 
 #[allow(non_snake_case)]
 #[derive(QGadget, Clone, Default)]
 pub struct Friend {
+    chatId: qt_property!(i64),
+    userId: qt_property!(i64),
     publicKey: qt_property!(QString),
     name: qt_property!(QString),
 }
 
-impl From<&tocks::contact::FriendData> for Friend {
-    fn from(data: &tocks::contact::FriendData) -> Friend {
-        let mut friend = Friend::default();
-
-        friend.publicKey = data.public_key().to_string().into();
-        friend.name = data.name().to_string().into();
-
-        friend
+impl From<&TocksFriend> for Friend {
+    fn from(friend: &TocksFriend) -> Self {
+        Self {
+            chatId: friend.chat_handle().id(),
+            userId: friend.id().id(),
+            publicKey: friend.public_key().to_string().into(),
+            name: friend.name().to_string().into(),
+        }
     }
 }
 

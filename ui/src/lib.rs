@@ -4,9 +4,9 @@ mod contacts;
 use account::Account;
 use contacts::{Friend, FriendRequest};
 
-use tocks::{contact::FriendData, AccountData, ChatEvent, ChatView, TocksEvent, TocksUiEvent};
+use tocks::{AccountId, ChatHandle, ChatLogEntry, TocksEvent, TocksUiEvent, UserHandle};
 
-use toxcore::{Message, PublicKey};
+use toxcore::{Message, PublicKey, ToxId};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -24,69 +24,55 @@ use qmetaobject::*;
 #[allow(non_snake_case)]
 struct ChatModel {
     base: qt_base_class!(trait QAbstractItemModel),
-    friend: qt_property!(QString; NOTIFY friendChanged),
-    friendChanged: qt_signal!(),
+    account: qt_property!(i64; NOTIFY accountChanged),
+    accountChanged: qt_signal!(),
+    chat: qt_property!(i64; NOTIFY chatChanged),
+    chatChanged: qt_signal!(),
 
-    chat_view: Option<ChatView>,
+    chat_log: Vec<ChatLogEntry>,
 }
 
 impl ChatModel {
-    fn set_view(&mut self, friend: FriendData, view: ChatView) {
-        self.friend = friend.public_key().to_string().into();
-        self.friendChanged();
+    fn set_content(&mut self, account_id: AccountId, chat: ChatHandle, content: Vec<ChatLogEntry>) {
+        self.account = account_id.id();
+        self.accountChanged();
 
-        if let Some(current_view) = &self.chat_view {
-            let current_view_guard = current_view.lock();
-            if current_view_guard.len() > 0 {
-                (self as &dyn QAbstractItemModel).begin_remove_rows(
-                    QModelIndex::default(),
-                    0,
-                    (current_view_guard.len() - 1) as i32,
-                );
-                (self as &dyn QAbstractItemModel).end_remove_rows();
-            }
+        self.chat = chat.id();
+        self.chatChanged();
+
+        if self.chat_log.len() > 0 {
+            (self as &dyn QAbstractItemModel).begin_remove_rows(
+                QModelIndex::default(),
+                0,
+                (self.chat_log.len() - 1) as i32,
+            );
+            (self as &dyn QAbstractItemModel).end_remove_rows();
         }
 
-        self.chat_view = Some(view);
+        self.chat_log = content;
 
-        let view_guard = self.chat_view.as_ref().unwrap().lock();
-
-        if view_guard.len() > 0 {
+        if self.chat_log.len() > 0 {
             (self as &dyn QAbstractItemModel).begin_insert_rows(
                 QModelIndex::default(),
                 0,
-                (view_guard.len() - 1) as i32,
+                (self.chat_log.len() - 1) as i32,
             );
             (self as &dyn QAbstractItemModel).end_insert_rows();
         }
     }
 
-    async fn run(&mut self) {
-        if self.chat_view.is_none() {
-            return;
-        }
+    fn push_message(&mut self, entry: ChatLogEntry) {
+        (self as &dyn QAbstractItemModel).begin_insert_rows(
+            QModelIndex::default(),
+            (self.chat_log.len()) as i32,
+            (self.chat_log.len()) as i32,
+            );
 
-        while let Some(event) = self.chat_view.as_mut().unwrap().chat_event().await {
-            self.handle_event(event)
-        }
+        self.chat_log.push(entry);
+
+        (self as &dyn QAbstractItemModel).end_insert_rows()
     }
 
-    fn handle_event(&self, event: ChatEvent) {
-        match event {
-            ChatEvent::MessageAdded(idx) => {
-                (self as &dyn QAbstractItemModel).begin_insert_rows(
-                    QModelIndex::default(),
-                    idx as i32,
-                    idx as i32,
-                );
-                (self as &dyn QAbstractItemModel).end_insert_rows();
-            }
-            ChatEvent::MessageUpdated(idx) => {
-                let qmodelidx = (self as &dyn QAbstractItemModel).create_index(idx as i32, 0, 0);
-                (self as &dyn QAbstractItemModel).data_changed(qmodelidx, qmodelidx);
-            }
-        }
-    }
 }
 
 impl QAbstractItemModel for ChatModel {
@@ -99,11 +85,7 @@ impl QAbstractItemModel for ChatModel {
     }
 
     fn row_count(&self, _parent: QModelIndex) -> i32 {
-        if let Some(view) = &self.chat_view {
-            view.lock().len() as i32
-        } else {
-            0
-        }
+        self.chat_log.len() as i32
     }
 
     fn column_count(&self, _parent: QModelIndex) -> i32 {
@@ -111,17 +93,17 @@ impl QAbstractItemModel for ChatModel {
     }
 
     fn data(&self, index: QModelIndex, _role: i32) -> QVariant {
-        if self.chat_view.is_none() {
+        debug!("Returning line, {}", index.row());
+
+        let entry = self.chat_log.get(index.row() as usize);
+
+        if entry.is_none() {
             return QVariant::default();
         }
+        let entry = entry.unwrap();
+        let message = entry.message();
 
-        debug!("Retruning line, {}", index.row());
-
-        let chat_view = self.chat_view.as_ref().unwrap();
-        let chat_view_guard = chat_view.lock();
-
-        let message = &chat_view_guard[index.row() as usize];
-        if let Message::Normal(message) = &message.message {
+        if let Message::Normal(message) = message {
             QString::from(message.clone()).to_qvariant()
         } else {
             QVariant::default()
@@ -134,15 +116,15 @@ impl QAbstractItemModel for ChatModel {
 struct QTocks {
     base: qt_base_class!(trait QObject),
     close: qt_method!(fn(&self)),
-    addFriendByPublicKey: qt_method!(fn(&self, account: QString, friend: QString)),
+    addFriendByPublicKey: qt_method!(fn(&self, account: i64, friend: QString)),
     login: qt_method!(fn(&self, account_name: QString, password: QString)),
-    newAccount: qt_method!(fn(&self, password: QString)),
-    updateChatModel: qt_method!(fn(&self, account: QString, public_key: QString)),
-    sendMessage: qt_method!(fn(&self, account: QString, public_key: QString, message: QString)),
+    newAccount: qt_method!(fn(&self, name: QString, password: QString)),
+    updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
+    sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
     inactiveAccountAdded: qt_signal!(name: QString),
     accountActivated: qt_signal!(account: Account),
-    friendAdded: qt_signal!(account: Account, friend: Friend),
-    friendRequestReceived: qt_signal!(account: Account, request: FriendRequest),
+    friendAdded: qt_signal!(account: i64, friend: Friend),
+    friendRequestReceived: qt_signal!(account: i64, request: FriendRequest),
     error: qt_signal!(error: QString),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
@@ -179,11 +161,11 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn addFriendByPublicKey(&self, account: QString, friend: QString) {
+    fn addFriendByPublicKey(&self, account: i64, friend: QString) {
         let self_public_key = PublicKey::from_str(&account.to_string()).unwrap();
         let friend_public_key = PublicKey::from_str(&friend.to_string()).unwrap();
         self.send_ui_request(TocksUiEvent::AddFriendByPublicKey(
-            self_public_key,
+            AccountId::from(account),
             friend_public_key,
         ));
     }
@@ -196,26 +178,22 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn newAccount(&self, password: QString) {
+    fn newAccount(&self, name: QString, password: QString) {
+        let name = name.to_string();
         let password = password.to_string();
-        self.send_ui_request(TocksUiEvent::CreateAccount(password));
+        self.send_ui_request(TocksUiEvent::CreateAccount(name, password));
     }
 
     #[allow(non_snake_case)]
-    fn updateChatModel(&mut self, account: QString, public_key: QString) {
-        let account = PublicKey::from_str(&account.to_string()).unwrap();
-        let public_key = PublicKey::from_str(&public_key.to_string()).unwrap();
-
-        self.send_ui_request(TocksUiEvent::ChatViewRequested(account, public_key));
+    fn updateChatModel(&mut self, account: i64, chat_handle: i64) {
+        self.send_ui_request(TocksUiEvent::LoadMessages(AccountId::from(account), ChatHandle::from(chat_handle)));
     }
 
     #[allow(non_snake_case)]
-    fn sendMessage(&mut self, account: QString, public_key: QString, message: QString) {
-        let account = PublicKey::from_str(&account.to_string()).unwrap();
-        let public_key = PublicKey::from_str(&public_key.to_string()).unwrap();
+    fn sendMessage(&mut self, account: i64, chat: i64, message: QString) {
         let message = message.to_string();
 
-        self.send_ui_request(TocksUiEvent::MessageSent(account, public_key, message));
+        self.send_ui_request(TocksUiEvent::MessageSent(AccountId::from(account), ChatHandle::from(chat), message));
     }
 
     fn set_account_list(&mut self, account_list: Vec<String>) {
@@ -224,15 +202,20 @@ impl QTocks {
         }
     }
 
-    fn account_login(&mut self, account: AccountData) {
-        let qaccount = Account::from(&account);
+    fn account_login(&mut self, account_id: AccountId, user: UserHandle, address: ToxId, name: String) {
+        let qaccount = Account {
+            id: account_id.id(),
+            userHandle: user.id(),
+            toxId: address.to_string().into(),
+            name: name.into(),
+        };
 
         self.accountActivated(qaccount);
     }
 
-    fn incoming_friend_request(&mut self, account: AccountData, request: toxcore::FriendRequest) {
+    fn incoming_friend_request(&mut self, account: AccountId, request: toxcore::FriendRequest) {
         self.friendRequestReceived(
-            Account::from(&account),
+            account.id(),
             FriendRequest {
                 sender: request.public_key.to_string().into(),
                 message: request.message.into(),
@@ -253,12 +236,19 @@ impl QTocks {
             TocksEvent::FriendRequestReceived(account, request) => {
                 self.incoming_friend_request(account, request)
             }
-            TocksEvent::AccountLoggedIn(account) => self.account_login(account),
+            TocksEvent::AccountLoggedIn(account_id, user_handle, address, name) => self.account_login(account_id, user_handle, address, name),
             TocksEvent::FriendAdded(account, friend) => {
-                self.friendAdded(Account::from(&account), Friend::from(&friend));
+                self.friendAdded(account.id(), Friend::from(&friend));
             }
-            TocksEvent::ChatView(_account, friend, view) => {
-                self.chat_model.pinned().borrow_mut().set_view(friend, view);
+            TocksEvent::MessagesLoaded(account, chat, messages) => {
+                self.chat_model.pinned().borrow_mut().set_content(account, chat, messages);
+            }
+            TocksEvent::MessageInserted(account, chat, entry) => {
+                let chat_model_pinned = self.chat_model.pinned();
+                let mut chat_model_ref = chat_model_pinned.borrow_mut();
+                if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
+                    chat_model_ref.push_message(entry);
+                }
             }
         }
     }
@@ -268,28 +258,13 @@ impl QTocks {
             enum Event {
                 Tocks(TocksEvent),
                 Close,
-                None,
             }
 
             // Some gymastics to help with lifetime management/mutability
             let event = {
                 let tocks_event_rx = &mut self.tocks_event_rx;
-                let chat_model = &mut self.chat_model;
-                let chat_model_pinned = chat_model.pinned();
-                let mut chat_model_mut = chat_model_pinned.borrow_mut();
-
-                // chat_model may not be ready yet. In that case it wil
-                // return early. We don't want to just rapidly wake up until
-                // the model is populated so we drop an infinite future on
-                // the end since we know that the sibling branch will wake
-                // up when we need it
-                let service_chat_model = async {
-                    chat_model_mut.run().await;
-                    futures::future::pending().await
-                };
 
                 tokio::select! {
-                    _ = service_chat_model => Event::None,
                     event = tocks_event_rx.recv() => {
                         match event {
                             Some(e) => Event::Tocks(e),
@@ -300,7 +275,6 @@ impl QTocks {
             };
 
             match event {
-                Event::None => continue,
                 Event::Close => break,
                 Event::Tocks(event) => self.handle_ui_callback(event),
             }

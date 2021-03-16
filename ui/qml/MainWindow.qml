@@ -47,15 +47,15 @@ RowLayout  {
         Connections {
             target: friendsList
 
-            function onFriendSelected(public_key) {
-                tocks.updateChatModel(friendsList.account.publicKey, public_key)
+            function onChatSelected(chat_id) {
+                tocks.updateChatModel(friendsList.account.id, chat_id)
             }
         }
     }
 
     ChatRoom {
-        account: accountsModel.get(accountSelector.currentIndex).publicKey
-        friend: chatModel.friend
+        account: accountsModel.get(accountSelector.currentIndex).id
+        chat: chatModel.chat
     }
 
 }

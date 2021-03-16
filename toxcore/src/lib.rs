@@ -36,6 +36,25 @@ macro_rules! impl_key_type {
             key: $underlying_type,
         }
 
+        impl $name {
+            pub fn as_bytes(&self) -> &[u8] {
+                &self.key
+            }
+
+            pub fn from_bytes(key: Vec<u8>) -> Result<$name, KeyDecodeError> {
+                let expected_length = $expected_size as usize;
+
+                if key.len() != expected_length {
+                    return Err(KeyDecodeError::InvalidKeyLength {
+                        actual: key.len(),
+                        expected: expected_length,
+                    });
+                }
+
+                Ok($name { key })
+            }
+        }
+
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 self.key.iter().try_for_each(|b| write!(f, "{:02x}", b))
@@ -70,8 +89,13 @@ impl_key_type!(ToxId, Vec<u8>, TOX_PUBLIC_KEY_SIZE + 4 + 2);
 
 /// Receipt for sent message
 pub struct Receipt {
-    #[allow(dead_code)]
     id: u32,
+}
+
+impl Receipt {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
 }
 
 /// Incoming friend request

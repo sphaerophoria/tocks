@@ -6,12 +6,13 @@ import QtQuick.Layouts 1.11
 ColumnLayout {
     id: root
 
-    required property string account
-    required property string friend
+    required property int account
+    required property int chat
 
 
     ChatLog {
         Layout.fillHeight: true
+        Layout.fillWidth: true
         id: chatLog
     }
 
@@ -31,7 +32,7 @@ ColumnLayout {
             wrapMode: TextEdit.Wrap
 
             Keys.onEnterPressed: {
-                tocks.sendMessage(account, friend, text)
+                tocks.sendMessage(account, chat, text)
             }
         }
 
@@ -43,7 +44,7 @@ ColumnLayout {
             Layout.preferredWidth: 100
 
             onClicked: {
-                tocks.sendMessage(account, friend, messageText.text)
+                tocks.sendMessage(account, chat, messageText.text)
             }
 
             text: "Send"

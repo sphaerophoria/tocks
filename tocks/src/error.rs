@@ -1,5 +1,9 @@
+use broadcast::error::RecvError;
 use thiserror::Error;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use toxcore::error::*;
+
+use tokio::sync::broadcast;
 
 use std::sync::PoisonError;
 
@@ -17,6 +21,11 @@ pub enum Error {
     Unimplemented(String),
     IoError(#[from] std::io::Error),
     Misc(#[from] Box<dyn std::error::Error>),
+    Db(#[from] rusqlite::Error),
+    RecvError(#[from] RecvError),
+    KeyDecodeError(#[from] KeyDecodeError),
+    #[error("failed to receive message")]
+    BroadcastRecvError,
     #[error("Invalid argument")]
     InvalidArgument,
 }
@@ -24,6 +33,12 @@ pub enum Error {
 impl<T> From<PoisonError<T>> for Error {
     fn from(err: PoisonError<T>) -> Self {
         Error::PoisonError(err.to_string())
+    }
+}
+
+impl From<BroadcastStreamRecvError> for Error {
+    fn from(err: BroadcastStreamRecvError) -> Self {
+        Error::BroadcastRecvError
     }
 }
 

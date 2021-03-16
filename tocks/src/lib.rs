@@ -5,63 +5,59 @@ pub mod contact;
 pub mod error;
 
 mod account;
-mod chatroom;
+mod storage;
 
 pub use crate::{
-    account::AccountData,
-    chatroom::{ChatEvent, ChatView},
+    account::AccountId,
     error::{Error, Result},
+    storage::{ChatHandle, ChatLogEntry, UserHandle},
+    contact::Friend,
 };
 
-use crate::{account::{Account, AccountManager}, contact::FriendData};
+use crate::{account::{Account, AccountManager}};
 
-use toxcore::{FriendRequest, PublicKey};
+use storage::ChatMessageId;
+use toxcore::{FriendRequest, PublicKey, ToxId};
 
-use futures::FutureExt;
+use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
 use tokio::sync::mpsc;
 
-use std::{
-    collections::HashMap,
-};
+lazy_static! {
+    pub static ref APP_DIRS: AppDirs = AppDirs::new(Some("tocks"), false).unwrap();
+}
 
 // UI things that tocks will need to react to
 pub enum TocksUiEvent {
     Close,
-    CreateAccount(String /*password*/),
-    AddFriendByPublicKey(
-        PublicKey, /*self address*/
-        PublicKey, /*friend address*/
-    ),
+    CreateAccount(String /*name*/, String /*password*/),
+    AddFriendByPublicKey(AccountId, PublicKey, /*friend address*/),
     Login(String /* Tox account name */, String /*password*/),
-    ChatViewRequested(PublicKey /*self*/, PublicKey /* friend */),
-    MessageSent(
-        PublicKey, /*self*/
-        PublicKey, /* friend */
-        String,    /* message */
-    ),
+    MessageSent(AccountId, ChatHandle, String, /* message */),
+    LoadMessages(AccountId, ChatHandle),
 }
 
 // Things external observers (like the UI) may want to observe
 pub enum TocksEvent {
     Error(String),
     AccountListLoaded(Vec<String>),
-    AccountLoggedIn(AccountData),
-    FriendRequestReceived(AccountData, FriendRequest),
-    FriendAdded(AccountData, FriendData),
-    ChatView(AccountData, FriendData, ChatView),
+    AccountLoggedIn(AccountId, UserHandle, ToxId, String),
+    FriendRequestReceived(AccountId, FriendRequest),
+    FriendAdded(AccountId, Friend),
+    MessagesLoaded(AccountId, ChatHandle, Vec<ChatLogEntry>),
+    MessageInserted(AccountId, ChatHandle, ChatLogEntry),
 }
 
 // Things that Tocks can handle in it's core iteration loop
-enum Event<'a> {
+enum Event {
     Ui(TocksUiEvent),
-    FriendRequest(&'a Account, toxcore::FriendRequest),
+    FriendRequest(AccountId, toxcore::FriendRequest),
+    ChatMessageInserted(AccountId, ChatHandle, ChatLogEntry),
     None,
 }
 
 pub struct Tocks {
-    _appdirs: AppDirs,
     account_manager: AccountManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
     tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
@@ -74,11 +70,14 @@ impl Tocks {
     ) -> Tocks {
 
         let tocks = Tocks {
-            _appdirs: AppDirs::new(Some("tocks"), false).unwrap(),
             account_manager: AccountManager::new(),
             ui_event_rx,
             tocks_event_tx,
         };
+
+        // Intentionally discard errors here. We'll get more errors later that
+        // the user can be presented with in the UI
+        let _ = std::fs::create_dir_all(&APP_DIRS.data_dir);
 
         let account_list = account::retrieve_account_list().unwrap_or_default();
         Self::send_tocks_event(
@@ -112,7 +111,13 @@ impl Tocks {
 
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
-                        TocksEvent::FriendRequestReceived(account.data().clone(), friend_request),
+                        TocksEvent::FriendRequestReceived(account, friend_request),
+                    );
+                },
+                Event::ChatMessageInserted(account, chat_handle, chat_log_entry) => {
+                    Self::send_tocks_event(
+                        &self.tocks_event_tx,
+                        TocksEvent::MessageInserted(account, chat_handle, chat_log_entry),
                     );
                 }
                 Event::None => (),
@@ -121,89 +126,90 @@ impl Tocks {
     }
 
     /// Returns `true` if app should be closed
-    pub fn handle_ui_request(&mut self, event: TocksUiEvent) -> Result<bool> {
+    fn handle_ui_request(&mut self, event: TocksUiEvent) -> Result<bool> {
         match event {
             TocksUiEvent::Close => {
                 return Ok(true);
             }
-            TocksUiEvent::CreateAccount(password) => {
+            TocksUiEvent::CreateAccount(name, password) => {
                 if !password.is_empty() {
                     warn!("Account passwords are not yet supported");
                 }
 
-                let account = Account::create()?;
-                let account_data = account.data().clone();
-                self.account_manager.add_account(account);
+                let account = Account::create(name)?;
+
+                let account_id = self.account_manager.add_account(account);
+                let account = self.account_manager.get(&account_id).unwrap();
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
-                    TocksEvent::AccountLoggedIn(account_data),
+                    TocksEvent::AccountLoggedIn(account_id, *account.user_handle(), account.address().clone(), account.name().to_string()),
                 );
             }
-            TocksUiEvent::AddFriendByPublicKey(self_address, friend_address) => {
-                let account = self.account_manager.get_mut(&self_address);
+            TocksUiEvent::AddFriendByPublicKey(account_id, friend_address) => {
+                let account = self.account_manager.get_mut(&account_id);
 
                 match account {
                     Some(account) => {
-                        account.add_friend_publickey(&friend_address)?;
+                        let id = account.add_friend_publickey(&friend_address)?;
 
                         Self::send_tocks_event(
                             &self.tocks_event_tx,
                             TocksEvent::FriendAdded(
-                                account.data().clone(),
-                                FriendData::from(&account.friends()[&friend_address]),
-                            ),
+                                account_id,
+                                account.friends()[&id].clone())
                         );
                     }
                     None => {
-                        error!("Account {} not present", self_address);
+                        //error!("Account {} not present", account_id);
                     }
                 }
             }
             TocksUiEvent::Login(account_name, password) => {
                 let account = Account::from_account_name(account_name, password)?;
-                let account = self.account_manager.add_account(account);
+                let account_id = self.account_manager.add_account(account);
+                let account = &self.account_manager.get(&account_id).unwrap();
+
+                let user_handle = account.user_handle();
+                let address = account.address();
+                let name = account.name();
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
-                    TocksEvent::AccountLoggedIn(account.data().clone()),
+                    TocksEvent::AccountLoggedIn(account_id, *user_handle, address.clone(), name.to_string()),
                 );
 
                 for friend in account.friends().values() {
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
-                        TocksEvent::FriendAdded(account.data().clone(), FriendData::from(friend)),
+                        TocksEvent::FriendAdded(account_id, friend.clone()),
                     );
                 }
             }
-            TocksUiEvent::ChatViewRequested(account, public_key) => {
-                let account = self.account_manager.get(&account);
-
-                let friend_data = account
-                    .and_then(|account| account.friends().get(&public_key))
-                    .map(FriendData::from);
-
-                let view = account.and_then(|account| account.chatview(&public_key));
-
-                if let (Some(account), Some(friend_data), Some(view)) = (account, friend_data, view)
-                {
-                    Self::send_tocks_event(
-                        &self.tocks_event_tx,
-                        TocksEvent::ChatView(account.data().clone(), friend_data, view),
-                    );
-                } else {
-                    error!("Requested chat view does not exist")
-                }
-            }
-            TocksUiEvent::MessageSent(account_key, friend_key, message) => {
-                let account = self.account_manager.get_mut(&account_key);
+            TocksUiEvent::MessageSent(account_id, chat_handle, message) => {
+                let account = self.account_manager.get_mut(&account_id);
 
                 if let Some(account) = account {
-                    account.send_message(&friend_key, message)?;
+                    let entry = account.send_message(&chat_handle, message)?;
+                    Self::send_tocks_event(
+                        &self.tocks_event_tx,
+                        TocksEvent::MessageInserted(account_id, chat_handle, entry));
                 } else {
-                    error!("Could not send to {} from {}", friend_key, account_key);
+                    error!("Could not send to {} from {}", chat_handle.id(), account_id.id());
                 }
-            }
+            },
+            TocksUiEvent::LoadMessages(account_id, chat_handle) => {
+                let account = self.account_manager.get_mut(&account_id);
+
+                if let Some(account) = account {
+                    let messages = account.load_messages(&chat_handle)?;
+                    Self::send_tocks_event(
+                        &self.tocks_event_tx,
+                        TocksEvent::MessagesLoaded(account_id, chat_handle, messages));
+                } else {
+                    error!("Could not find account {}", account_id.id());
+                }
+            },
         };
 
         Ok(false)
@@ -215,10 +221,10 @@ impl Tocks {
         let _ = tocks_event_tx.send(event);
     }
 
-    async fn next_event<'a>(
-        accounts: &'a mut AccountManager,
+    async fn next_event(
+        accounts: &mut AccountManager,
         ui_events: &mut mpsc::UnboundedReceiver<TocksUiEvent>,
-    ) -> Event<'a> {
+    ) -> Event {
         let event = tokio::select! {
             request = ui_events.recv() => {
                 match request {
