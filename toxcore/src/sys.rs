@@ -70,6 +70,11 @@ pub trait ToxApi: Send + Sync {
         tox: *mut toxcore_sys::Tox,
         callback: tox_friend_message_cb,
     );
+    unsafe fn callback_friend_read_receipt(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_read_receipt_cb,
+    );
 }
 
 pub(crate) struct ToxApiImpl;
@@ -197,6 +202,14 @@ impl ToxApi for ToxApiImpl {
         callback: tox_friend_message_cb,
     ) {
         tox_callback_friend_message(tox, callback)
+    }
+
+    unsafe fn callback_friend_read_receipt(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_read_receipt_cb,
+    ) {
+        tox_callback_friend_read_receipt(tox, callback)
     }
 }
 

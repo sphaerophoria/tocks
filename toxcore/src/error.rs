@@ -31,8 +31,7 @@ pub enum ToxCreationError {
 }
 
 #[derive(Error, Debug)]
-pub enum ToxBuildError
-{
+pub enum ToxBuildError {
     #[error("{0}")]
     ToxCreationError(#[from] ToxCreationError),
     #[error("Required callback not provided")]

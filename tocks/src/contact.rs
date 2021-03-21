@@ -1,7 +1,7 @@
 use crate::storage::{ChatHandle, UserHandle};
 
-use toxcore::{Friend as ToxFriend, PublicKey};
 use std::collections::HashMap;
+use toxcore::{Friend as ToxFriend, PublicKey};
 
 /// Data associated with a tox friend
 #[derive(Clone, Debug)]
@@ -82,8 +82,7 @@ impl UserManager {
         &self.friends[self.pk_mapping[key]].0
     }
 
-    pub fn friends(&self) -> impl Iterator<Item=&Friend> {
+    pub fn friends(&self) -> impl Iterator<Item = &Friend> {
         self.friends.iter().map(|item| &item.0)
     }
-
 }

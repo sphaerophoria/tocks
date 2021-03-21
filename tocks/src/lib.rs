@@ -9,7 +9,7 @@ mod storage;
 pub use crate::{
     account::AccountId,
     contact::Friend,
-    storage::{ChatHandle, ChatLogEntry, UserHandle},
+    storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
 use anyhow::{Context, Result};
@@ -46,14 +46,20 @@ pub enum TocksEvent {
     FriendAdded(AccountId, Friend),
     MessagesLoaded(AccountId, ChatHandle, Vec<ChatLogEntry>),
     MessageInserted(AccountId, ChatHandle, ChatLogEntry),
+    MessageCompleted(AccountId, ChatHandle, ChatMessageId),
 }
 
 // Things that Tocks can handle in it's core iteration loop
 enum Event {
     Ui(TocksUiEvent),
-    FriendRequest(AccountId, toxcore::FriendRequest),
-    ChatMessageInserted(AccountId, ChatHandle, ChatLogEntry),
+    Tocks(TocksEvent),
     None,
+}
+
+impl From<TocksEvent> for Event {
+    fn from(event: TocksEvent) -> Event {
+        Event::Tocks(event)
+    }
 }
 
 pub struct Tocks {
@@ -222,20 +228,8 @@ impl Tocks {
             Event::Ui(request) => self
                 .handle_ui_request(request)
                 .context("Failed to handle UI request"),
-            Event::FriendRequest(account, friend_request) => {
-                info!("Received friend request from {}", friend_request.public_key);
-
-                Self::send_tocks_event(
-                    &self.tocks_event_tx,
-                    TocksEvent::FriendRequestReceived(account, friend_request),
-                );
-                Ok(false)
-            }
-            Event::ChatMessageInserted(account, chat_handle, chat_log_entry) => {
-                Self::send_tocks_event(
-                    &self.tocks_event_tx,
-                    TocksEvent::MessageInserted(account, chat_handle, chat_log_entry),
-                );
+            Event::Tocks(e) => {
+                Self::send_tocks_event(&self.tocks_event_tx, e);
                 Ok(false)
             }
             Event::None => Ok(false),

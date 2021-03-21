@@ -1,4 +1,8 @@
-use crate::{FriendRequest, error::*, tox::{FriendMessageCallback, FriendRequestCallback}};
+use crate::{
+    error::*,
+    tox::{FriendMessageCallback, FriendRequestCallback, ReceiptCallback},
+    FriendRequest,
+};
 use crate::{
     sys::{ToxApi, ToxApiImpl, ToxOptionsApi, ToxOptionsSys},
     tox::{Tox, ToxImpl},
@@ -121,6 +125,10 @@ impl ToxBuilder {
         self
     }
 
+    pub fn receipt_callback(mut self, callback: ReceiptCallback) -> Self {
+        self.inner.receipt_callback(callback);
+        self
+    }
 
     pub fn build(self) -> Result<Tox, ToxBuildError> {
         Ok(Tox::new(self.inner.build(ToxApiImpl)?))
@@ -136,6 +144,7 @@ struct ToxBuilderImpl<Api: ToxOptionsApi> {
     options: *mut Tox_Options,
     friend_message_callback: Option<FriendMessageCallback>,
     friend_request_callback: Option<FriendRequestCallback>,
+    receipt_callback: Option<ReceiptCallback>,
     log: bool,
 }
 
@@ -153,6 +162,7 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
             options,
             friend_message_callback: None,
             friend_request_callback: None,
+            receipt_callback: None,
             log: false,
         })
     }
@@ -216,6 +226,10 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         self.friend_request_callback = Some(callback);
     }
 
+    pub fn receipt_callback(&mut self, callback: ReceiptCallback) {
+        self.receipt_callback = Some(callback);
+    }
+
     fn map_err_new(err: TOX_ERR_NEW) -> ToxCreationError {
         match err {
             TOX_ERR_NEW_NULL => return ToxCreationError::Null,
@@ -251,14 +265,32 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         }
 
         let mut friend_message_callback = None;
-        std::mem::swap(&mut friend_message_callback, &mut self.friend_message_callback);
-        let friend_message_callback = friend_message_callback.ok_or(ToxBuildError::MissingCallbackError)?;
+        std::mem::swap(
+            &mut friend_message_callback,
+            &mut self.friend_message_callback,
+        );
+        let friend_message_callback =
+            friend_message_callback.ok_or(ToxBuildError::MissingCallbackError)?;
 
         let mut friend_request_callback = None;
-        std::mem::swap(&mut friend_request_callback, &mut self.friend_request_callback);
-        let friend_request_callback = friend_request_callback.ok_or(ToxBuildError::MissingCallbackError)?;
+        std::mem::swap(
+            &mut friend_request_callback,
+            &mut self.friend_request_callback,
+        );
+        let friend_request_callback =
+            friend_request_callback.ok_or(ToxBuildError::MissingCallbackError)?;
 
-        let ret = ToxImpl::new(tox_api, sys_tox, friend_message_callback, friend_request_callback);
+        let mut receipt_callback = None;
+        std::mem::swap(&mut receipt_callback, &mut self.receipt_callback);
+        let receipt_callback = receipt_callback.ok_or(ToxBuildError::MissingCallbackError)?;
+
+        let ret = ToxImpl::new(
+            tox_api,
+            sys_tox,
+            friend_message_callback,
+            friend_request_callback,
+            receipt_callback,
+        );
 
         Ok(ret)
     }

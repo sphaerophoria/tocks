@@ -4,13 +4,20 @@ use toxcore::{Message, PublicKey, Receipt};
 
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, NO_PARAMS};
+use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction, NO_PARAMS};
 
-use std::path::Path;
+use std::{fmt, path::Path};
 
 // Wrapper around sqlite message table id
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct ChatMessageId {
     msg_id: i64,
+}
+
+impl fmt::Display for ChatMessageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.msg_id)
+    }
 }
 
 // NOTE: This is written to the DB, so if the meanings of these values are
@@ -20,6 +27,7 @@ pub struct ChatLogEntry {
     sender: UserHandle,
     message: Message,
     timestamp: DateTime<Utc>,
+    complete: bool,
 }
 
 impl ChatLogEntry {
@@ -37,6 +45,14 @@ impl ChatLogEntry {
 
     pub fn timestamp(&self) -> &DateTime<Utc> {
         &self.timestamp
+    }
+
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+
+    pub fn set_complete(&mut self, complete: bool) {
+        self.complete = complete;
     }
 }
 
@@ -60,6 +76,12 @@ impl From<i64> for ChatHandle {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UserHandle {
     user_id: i64,
+}
+
+impl fmt::Display for UserHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.user_id)
+    }
 }
 
 impl UserHandle {
@@ -257,6 +279,9 @@ impl Storage {
             sender,
             message,
             timestamp,
+            // Default to completed, if the caller wants to deal with receipts
+            // they can update this once the receipt is injected into storage
+            complete: true,
         })
     }
 
@@ -264,9 +289,10 @@ impl Storage {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT messages.id, sender_id, timestamp, message, action \
+                "SELECT messages.id, sender_id, timestamp, message, action, pending_messages.id \
                 FROM messages \
                 LEFT JOIN text_messages ON messages.id = text_messages.message_id \
+                LEFT JOIN pending_messages ON messages.id = pending_messages.message_id \
                 WHERE chat_id = ?1",
             )
             .context("Failed to prepare statement to retrieve messages from DB")?;
@@ -282,6 +308,7 @@ impl Storage {
                 let timestamp: DateTime<Utc> = row.get(2)?;
                 let message_str: String = row.get(3)?;
                 let is_action: bool = row.get(4)?;
+                let complete: bool = row.get_raw(5) == ValueRef::Null;
 
                 let message = if is_action {
                     Message::Action(message_str)
@@ -294,6 +321,7 @@ impl Storage {
                     sender,
                     message,
                     timestamp,
+                    complete,
                 })
             })
             .context("Failed to retrieve messages from DB")?;
@@ -319,12 +347,16 @@ impl Storage {
         Ok(())
     }
 
-    pub fn resolve_receipt(&mut self, receipt: &Receipt) -> Result<ChatMessageId> {
+    pub fn resolve_receipt(
+        &mut self,
+        chat_handle: &ChatHandle,
+        receipt: &Receipt,
+    ) -> Result<ChatMessageId> {
         let msg_id = self
             .connection
             .query_row(
-                "SELECT message_id FROM pending_messages WHERE receipt_id = ?1",
-                params![receipt.id()],
+                "SELECT message_id FROM pending_messages LEFT JOIN messages ON pending_messages.receipt_id = messages.id WHERE receipt_id = ?1 AND messages.chat_id = ?2",
+                params![receipt.id(), chat_handle.id()],
                 |row| row.get(0),
             )
             .context("Failed to retrieve receipt from DB")?;

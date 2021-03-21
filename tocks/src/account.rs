@@ -1,10 +1,10 @@
 use crate::{
     contact::{Friend, UserManager},
-    storage::{ChatHandle, ChatLogEntry, Storage, UserHandle},
-    Event, APP_DIRS,
+    storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
+    Event, TocksEvent, APP_DIRS,
 };
 
-use toxcore::{FriendRequest, Message, PublicKey, Tox, ToxId};
+use toxcore::{FriendRequest, Message, PublicKey, Receipt, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
@@ -27,13 +27,14 @@ lazy_static! {
 pub(crate) enum AccountEvent {
     FriendRequest(FriendRequest),
     ChatMessageInserted(ChatHandle, ChatLogEntry),
+    ChatMessageCompleted(ChatHandle, ChatMessageId),
     None,
 }
 
-enum ToxCoreCallback
-{
+enum ToxCoreCallback {
     MessageReceived(toxcore::Friend, Message),
     FriendRequest(FriendRequest),
+    ReadReceipt(toxcore::Friend, Receipt),
 }
 
 pub(crate) struct Account {
@@ -62,8 +63,7 @@ impl Account {
             return Err(anyhow!("Password support is not implemented"));
         }
 
-        let builder = Tox::builder()?
-            .savedata(toxcore::SaveData::ToxSave(&account_vec));
+        let builder = Tox::builder()?.savedata(toxcore::SaveData::ToxSave(&account_vec));
 
         Self::from_builder(builder)
     }
@@ -79,19 +79,26 @@ impl Account {
     }
 
     pub fn from_builder(builder: toxcore::ToxBuilder) -> Result<Account> {
-
         let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
 
-        let toxcore_callback_tx_clone = toxcore_callback_tx.clone();
+        let friend_request_callback_tx = toxcore_callback_tx.clone();
+        let receipt_callback_tx = toxcore_callback_tx.clone();
 
         let mut tox = builder
             .friend_message_callback(Box::new(move |friend, message| {
-                toxcore_callback_tx.send(ToxCoreCallback::MessageReceived(friend, message))
+                toxcore_callback_tx
+                    .send(ToxCoreCallback::MessageReceived(friend, message))
                     .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
             }))
             .friend_request_callback(Box::new(move |request| {
-                toxcore_callback_tx_clone.send(ToxCoreCallback::FriendRequest(request))
-                    .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
+                friend_request_callback_tx
+                    .send(ToxCoreCallback::FriendRequest(request))
+                    .unwrap_or_else(|_| error!("Failed to propagate friend request"))
+            }))
+            .receipt_callback(Box::new(move |friend, receipt| {
+                receipt_callback_tx
+                    .send(ToxCoreCallback::ReadReceipt(friend, receipt))
+                    .unwrap_or_else(|_| error!("Failed to propagate receipt"))
             }))
             .build()?;
 
@@ -131,11 +138,9 @@ impl Account {
         for tox_friend in tox_friends {
             let friend = match friends.remove(&tox_friend.public_key()) {
                 Some(f) => f,
-                None => {
-                    storage
-                        .add_friend(tox_friend.public_key(), tox_friend.name())
-                        .context("Failed to add friend to storage")?
-                }
+                None => storage
+                    .add_friend(tox_friend.public_key(), tox_friend.name())
+                    .context("Failed to add friend to storage")?,
             };
 
             user_manager.add_friend(friend, tox_friend);
@@ -145,7 +150,8 @@ impl Account {
         // friend request in the past. Even if we wanted to send again, we don't
         // have the toxid to back it up
         for (_, friend) in friends {
-            let tox_friend = tox.add_friend_norequest(friend.public_key())
+            let tox_friend = tox
+                .add_friend_norequest(friend.public_key())
                 .context("Failed to add missing tox friend")?;
 
             user_manager.add_friend(friend, tox_friend);
@@ -179,7 +185,7 @@ impl Account {
         &self.name
     }
 
-    pub fn friends(&self) -> impl Iterator<Item=&Friend> {
+    pub fn friends(&self) -> impl Iterator<Item = &Friend> {
         self.user_manager.friends()
     }
 
@@ -218,7 +224,7 @@ impl Account {
         // than get the message out a little faster. If this starts to become a
         // problem we can try improving the performance of sqlite, or re-evaluate
         // this decision. Since we are using the storage backed ID
-        let chat_log_entry = self
+        let mut chat_log_entry = self
             .storage
             .push_message(chat_handle, self.user_handle, message)
             .context("Failed to insert message into storage")?;
@@ -234,12 +240,7 @@ impl Account {
             .add_unresolved_receipt(chat_log_entry.id(), &receipt)
             .context("Failed to insert receipt into storage")?;
 
-        // FIXME: Until we hook up the toxcore API to resolve receipts we just
-        // immediately resolve them to prevent our db from filling up with
-        // messages that will never be resolved
-        self.storage
-            .resolve_receipt(&receipt)
-            .context("Failed to resolve receipt in storage")?;
+        chat_log_entry.set_complete(false);
 
         Ok(chat_log_entry)
     }
@@ -264,7 +265,14 @@ impl Account {
                     },
                     Some(ToxCoreCallback::FriendRequest(request)) => {
                         Ok(AccountEvent::FriendRequest(request))
-                    }
+                    },
+                    Some(ToxCoreCallback::ReadReceipt(tox_friend, receipt)) => {
+                        let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
+                        let updated_message_id = self.storage.resolve_receipt(friend.chat_handle(), &receipt)
+                            .context("Failed to resolve receipt")?;
+
+                        Ok(AccountEvent::ChatMessageCompleted(*friend.chat_handle(), updated_message_id))
+                    },
                     None => Ok(AccountEvent::None),
                 }
             }
@@ -340,9 +348,14 @@ impl AccountManager {
         // we'll catch those next time
         match account_events.await.0 {
             (id, Ok(AccountEvent::ChatMessageInserted(chat_handle, m))) => {
-                Event::ChatMessageInserted(id, chat_handle, m)
+                TocksEvent::MessageInserted(id, chat_handle, m).into()
             }
-            (id, Ok(AccountEvent::FriendRequest(r))) => Event::FriendRequest(id, r),
+            (id, Ok(AccountEvent::FriendRequest(r))) => {
+                TocksEvent::FriendRequestReceived(id, r).into()
+            }
+            (id, Ok(AccountEvent::ChatMessageCompleted(chat_handle, msg_id))) => {
+                TocksEvent::MessageCompleted(id, chat_handle, msg_id).into()
+            }
             (_, Ok(AccountEvent::None)) => Event::None,
             (id, Err(e)) => {
                 error!("Error in account {:?} handler: {}", id, e);

@@ -4,7 +4,9 @@ mod contacts;
 use account::Account;
 use contacts::{Friend, FriendRequest};
 
-use tocks::{AccountId, ChatHandle, ChatLogEntry, TocksEvent, TocksUiEvent, UserHandle};
+use tocks::{
+    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle,
+};
 
 use toxcore::{Message, PublicKey, ToxId};
 
@@ -72,6 +74,21 @@ impl ChatModel {
 
         (self as &dyn QAbstractItemModel).end_insert_rows()
     }
+
+    fn resolve_message(&mut self, id: ChatMessageId) {
+        let idx = match self.chat_log.binary_search_by(|item| item.id().cmp(&id)) {
+            Ok(idx) => idx,
+            Err(_) => {
+                error!("Chatlog item {} not found", id);
+                return;
+            }
+        };
+
+        self.chat_log[idx].set_complete(true);
+
+        let qidx = (self as &dyn QAbstractItemModel).create_index(idx as i32, 0, 0);
+        (self as &dyn QAbstractItemModel).data_changed(qidx, qidx);
+    }
 }
 
 impl QAbstractItemModel for ChatModel {
@@ -103,7 +120,8 @@ impl QAbstractItemModel for ChatModel {
         let message = entry.message();
 
         if let Message::Normal(message) = message {
-            QString::from(message.clone()).to_qvariant()
+            let entry_string = format!("{}: {} ({})", entry.sender(), message, entry.complete());
+            QString::from(entry_string).to_qvariant()
         } else {
             QVariant::default()
         }
@@ -265,6 +283,13 @@ impl QTocks {
                 let mut chat_model_ref = chat_model_pinned.borrow_mut();
                 if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
                     chat_model_ref.push_message(entry);
+                }
+            }
+            TocksEvent::MessageCompleted(account, chat, id) => {
+                let chat_model_pinned = self.chat_model.pinned();
+                let mut chat_model_ref = chat_model_pinned.borrow_mut();
+                if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
+                    chat_model_ref.resolve_message(id);
                 }
             }
         }

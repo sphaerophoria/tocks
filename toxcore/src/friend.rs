@@ -3,7 +3,7 @@ use crate::{FriendData, PublicKey};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 /// Information related to a tox friend
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Friend {
     pub(crate) id: u32,
     pub(crate) data: Arc<RwLock<FriendData>>,

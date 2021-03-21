@@ -39,6 +39,7 @@ macro_rules! impl_self_key_getter {
 
 pub type FriendMessageCallback = Box<dyn FnMut(Friend, Message)>;
 pub type FriendRequestCallback = Box<dyn FnMut(FriendRequest)>;
+pub type ReceiptCallback = Box<dyn FnMut(Friend, Receipt)>;
 
 /// A tox account
 ///
@@ -153,6 +154,7 @@ impl SysToxMutabilityWrapper {
 struct ToxData {
     friend_request_callback: FriendRequestCallback,
     friend_message_callback: FriendMessageCallback,
+    receipt_callback: ReceiptCallback,
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
@@ -184,10 +186,15 @@ impl<Api: ToxApi> ToxImpl<Api> {
         sys_tox: *mut toxcore_sys::Tox,
         friend_message_callback: FriendMessageCallback,
         friend_request_callback: FriendRequestCallback,
+        receipt_callback: ReceiptCallback,
     ) -> ToxImpl<Api> {
         unsafe {
             api.callback_friend_request(sys_tox, Some(tox_friend_request_callback::<Api>));
             api.callback_friend_message(sys_tox, Some(tox_friend_message_callback::<Api>));
+            api.callback_friend_read_receipt(
+                sys_tox,
+                Some(tox_friend_read_receipt_callback::<Api>),
+            );
         }
 
         // FIXME: friends should be initialized here and only accessed later,
@@ -200,6 +207,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
             data: ToxData {
                 friend_request_callback,
                 friend_message_callback,
+                receipt_callback,
                 friend_data: HashMap::new(),
             },
         }
@@ -496,15 +504,13 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
         }
     };
 
-
     let friend_data = match tox_data.data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
-            return
+            return;
         }
     };
-
 
     let f = Friend {
         id: friend_number,
@@ -512,6 +518,30 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
     };
 
     (*tox_data.data.friend_message_callback)(f, message);
+}
+
+pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
+    _tox: *mut toxcore_sys::Tox,
+    friend_number: u32,
+    message_id: u32,
+    user_data: *mut std::os::raw::c_void,
+) {
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
+
+    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return;
+        }
+    };
+
+    let f = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    (*tox_data.data.receipt_callback)(f, Receipt { id: message_id });
 }
 
 #[cfg(test)]
