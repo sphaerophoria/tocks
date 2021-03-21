@@ -2,7 +2,6 @@ use crate::{
     error::*,
     Friend, FriendRequest, Message, Receipt,
     tox::{FriendMessageCallback, FriendRequestCallback, ReceiptCallback},
-    FriendRequest,
 };
 use crate::{
     sys::{ToxApi, ToxApiImpl, ToxOptionsApi, ToxOptionsSys},
