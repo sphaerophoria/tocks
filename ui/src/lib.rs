@@ -66,13 +66,12 @@ impl ChatModel {
             QModelIndex::default(),
             (self.chat_log.len()) as i32,
             (self.chat_log.len()) as i32,
-            );
+        );
 
         self.chat_log.push(entry);
 
         (self as &dyn QAbstractItemModel).end_insert_rows()
     }
-
 }
 
 impl QAbstractItemModel for ChatModel {
@@ -186,14 +185,21 @@ impl QTocks {
 
     #[allow(non_snake_case)]
     fn updateChatModel(&mut self, account: i64, chat_handle: i64) {
-        self.send_ui_request(TocksUiEvent::LoadMessages(AccountId::from(account), ChatHandle::from(chat_handle)));
+        self.send_ui_request(TocksUiEvent::LoadMessages(
+            AccountId::from(account),
+            ChatHandle::from(chat_handle),
+        ));
     }
 
     #[allow(non_snake_case)]
     fn sendMessage(&mut self, account: i64, chat: i64, message: QString) {
         let message = message.to_string();
 
-        self.send_ui_request(TocksUiEvent::MessageSent(AccountId::from(account), ChatHandle::from(chat), message));
+        self.send_ui_request(TocksUiEvent::MessageSent(
+            AccountId::from(account),
+            ChatHandle::from(chat),
+            message,
+        ));
     }
 
     fn set_account_list(&mut self, account_list: Vec<String>) {
@@ -202,7 +208,13 @@ impl QTocks {
         }
     }
 
-    fn account_login(&mut self, account_id: AccountId, user: UserHandle, address: ToxId, name: String) {
+    fn account_login(
+        &mut self,
+        account_id: AccountId,
+        user: UserHandle,
+        address: ToxId,
+        name: String,
+    ) {
         let qaccount = Account {
             id: account_id.id(),
             userHandle: user.id(),
@@ -236,12 +248,17 @@ impl QTocks {
             TocksEvent::FriendRequestReceived(account, request) => {
                 self.incoming_friend_request(account, request)
             }
-            TocksEvent::AccountLoggedIn(account_id, user_handle, address, name) => self.account_login(account_id, user_handle, address, name),
+            TocksEvent::AccountLoggedIn(account_id, user_handle, address, name) => {
+                self.account_login(account_id, user_handle, address, name)
+            }
             TocksEvent::FriendAdded(account, friend) => {
                 self.friendAdded(account.id(), Friend::from(&friend));
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
-                self.chat_model.pinned().borrow_mut().set_content(account, chat, messages);
+                self.chat_model
+                    .pinned()
+                    .borrow_mut()
+                    .set_content(account, chat, messages);
             }
             TocksEvent::MessageInserted(account, chat, entry) => {
                 let chat_model_pinned = self.chat_model.pinned();

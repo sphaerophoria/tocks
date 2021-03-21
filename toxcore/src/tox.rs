@@ -348,7 +348,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
             return Err(ToxSendMessageError::from(err));
         }
 
-        Ok(Receipt{ id: receipt_id })
+        Ok(Receipt { id: receipt_id })
     }
 
     /// Calls into toxcore to get the public key for the provided friend id
@@ -554,9 +554,13 @@ pub(crate) mod tests {
 
             let default_peer_name = "TestPeer";
 
-            mock.expect_callback_friend_request().return_const(()).once();
+            mock.expect_callback_friend_request()
+                .return_const(())
+                .once();
 
-            mock.expect_callback_friend_message().return_const(()).once();
+            mock.expect_callback_friend_message()
+                .return_const(())
+                .once();
 
             mock.expect_kill().return_const(());
 
@@ -738,8 +742,8 @@ pub(crate) mod tests {
             .return_const(self_name.len() as u64);
 
         mock.expect_self_get_name()
-            .returning_st(move |_, name_out| {
-                unsafe {std::ptr::copy_nonoverlapping(self_name.as_ptr(), name_out, self_name.len())}
+            .returning_st(move |_, name_out| unsafe {
+                std::ptr::copy_nonoverlapping(self_name.as_ptr(), name_out, self_name.len())
             });
 
         let fixture = ToxFixture::new(mock);
@@ -752,22 +756,19 @@ pub(crate) mod tests {
         let mut mock = MockSysToxApi::default();
 
         // Set up fake friends list with 3 items
-        mock.expect_self_get_friend_list_size().return_const(3 as u32);
+        mock.expect_self_get_friend_list_size()
+            .return_const(3 as u32);
         mock.expect_self_get_friend_list()
-            .returning_st(|_, output_list| {
-                unsafe {
-                    *output_list = 1;
-                    *output_list.offset(1) = 2;
-                    *output_list.offset(2) = 3;
-                }
+            .returning_st(|_, output_list| unsafe {
+                *output_list = 1;
+                *output_list.offset(1) = 2;
+                *output_list.offset(2) = 3;
             });
 
         // mocked friend PKs will only be 3 long, "pk1", "pk2", "pk3"
         mock.expect_public_key_size().return_const(3 as u32);
         mock.expect_friend_get_public_key()
-            .withf_st(|_, id, _output, _error| {
-                *id == 1u32 || *id == 2u32 || *id == 3u32
-            })
+            .withf_st(|_, id, _output, _error| *id == 1u32 || *id == 2u32 || *id == 3u32)
             .returning_st(|_, id, output, _error| {
                 unsafe {
                     let key = format!("pk{}", id);
@@ -779,9 +780,7 @@ pub(crate) mod tests {
 
         mock.expect_friend_get_name_size().return_const(5 as u32);
         mock.expect_friend_get_name()
-            .withf_st(|_, id, _output, _error| {
-                *id == 1u32 || *id == 2u32 || *id == 3u32
-            })
+            .withf_st(|_, id, _output, _error| *id == 1u32 || *id == 2u32 || *id == 3u32)
             .returning_st(|_, id, output, _error| {
                 unsafe {
                     let name = format!("name{}", id);
@@ -796,19 +795,27 @@ pub(crate) mod tests {
         let friends = fixture.tox.friends().unwrap();
 
         let friend_matches_id = |friend: &Friend, id: u32| {
-            friend.name() == format!("name{}", id) &&
-            friend.public_key().key == format!("pk{}", id).into_bytes()
+            friend.name() == format!("name{}", id)
+                && friend.public_key().key == format!("pk{}", id).into_bytes()
         };
 
         assert_eq!(friends.len(), 3);
-        assert!(friends.iter().find(|item| friend_matches_id(item, 1)).is_some());
-        assert!(friends.iter().find(|item| friend_matches_id(item, 2)).is_some());
-        assert!(friends.iter().find(|item| friend_matches_id(item, 3)).is_some());
+        assert!(friends
+            .iter()
+            .find(|item| friend_matches_id(item, 1))
+            .is_some());
+        assert!(friends
+            .iter()
+            .find(|item| friend_matches_id(item, 2))
+            .is_some());
+        assert!(friends
+            .iter()
+            .find(|item| friend_matches_id(item, 3))
+            .is_some());
     }
 
     #[test]
-    fn test_friend_retrieval_name_failure()
-    {
+    fn test_friend_retrieval_name_failure() {
         let mut mock = MockSysToxApi::default();
         mock.expect_friend_get_name_size()
             .withf_st(|_, id, _err| *id == 0u32)
@@ -818,7 +825,9 @@ pub(crate) mod tests {
         mock.expect_friend_get_name()
             .withf_st(|_, id, _output, _err| *id == 0u32)
             .returning_st(|_, _id, _output, err| {
-                unsafe { *err = TOX_ERR_FRIEND_QUERY_NULL; }
+                unsafe {
+                    *err = TOX_ERR_FRIEND_QUERY_NULL;
+                }
                 return false;
             })
             .once();
@@ -828,11 +837,12 @@ pub(crate) mod tests {
         mock.expect_friend_get_name_size()
             .withf_st(|_, id, _err| *id == 0u32)
             .returning_st(|_, _id, err| {
-                unsafe { *err = TOX_ERR_FRIEND_QUERY_NULL; }
+                unsafe {
+                    *err = TOX_ERR_FRIEND_QUERY_NULL;
+                }
                 99348
             })
             .once();
-
 
         let fixture = ToxFixture::new(mock);
         assert!(fixture.tox.name_from_id(0).is_err());
@@ -840,8 +850,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_friend_retrieval_pk_failure()
-    {
+    fn test_friend_retrieval_pk_failure() {
         let mut mock = MockSysToxApi::default();
         mock.expect_friend_get_public_key()
             .withf_st(|_, id, _output, _err| *id == 0u32)

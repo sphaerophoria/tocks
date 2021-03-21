@@ -2,21 +2,20 @@
 #![allow(clippy::needless_lifetimes)]
 
 pub mod contact;
-pub mod error;
 
 mod account;
 mod storage;
 
 pub use crate::{
     account::AccountId,
-    error::{Error, Result},
-    storage::{ChatHandle, ChatLogEntry, UserHandle},
     contact::Friend,
+    storage::{ChatHandle, ChatLogEntry, UserHandle},
 };
 
-use crate::{account::{Account, AccountManager}};
+use anyhow::{Context, Result};
 
-use storage::ChatMessageId;
+use crate::account::{Account, AccountManager};
+
 use toxcore::{FriendRequest, PublicKey, ToxId};
 
 use lazy_static::lazy_static;
@@ -32,9 +31,9 @@ lazy_static! {
 pub enum TocksUiEvent {
     Close,
     CreateAccount(String /*name*/, String /*password*/),
-    AddFriendByPublicKey(AccountId, PublicKey, /*friend address*/),
+    AddFriendByPublicKey(AccountId, PublicKey /*friend address*/),
     Login(String /* Tox account name */, String /*password*/),
-    MessageSent(AccountId, ChatHandle, String, /* message */),
+    MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
 }
 
@@ -68,7 +67,6 @@ impl Tocks {
         ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
         tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
     ) -> Tocks {
-
         let tocks = Tocks {
             account_manager: AccountManager::new(),
             ui_event_rx,
@@ -90,37 +88,14 @@ impl Tocks {
 
     pub async fn run(&mut self) {
         loop {
-            // Split struct for easier reference management
-            let ui_event_rx = &mut self.ui_event_rx;
-            let account_manager = &mut self.account_manager;
+            let event = self.next_event().await;
 
-            match Self::next_event(account_manager, ui_event_rx).await {
-                Event::Ui(request) => match self.handle_ui_request(request) {
-                    Ok(true) => return,
-                    Ok(false) => (),
-                    Err(e) => {
-                        error!("Failed to handle UI request: {}", e);
-                        Self::send_tocks_event(
-                            &self.tocks_event_tx,
-                            TocksEvent::Error(e.to_string()),
-                        );
-                    }
-                },
-                Event::FriendRequest(account, friend_request) => {
-                    info!("Received friend request from {}", friend_request.public_key);
-
-                    Self::send_tocks_event(
-                        &self.tocks_event_tx,
-                        TocksEvent::FriendRequestReceived(account, friend_request),
-                    );
-                },
-                Event::ChatMessageInserted(account, chat_handle, chat_log_entry) => {
-                    Self::send_tocks_event(
-                        &self.tocks_event_tx,
-                        TocksEvent::MessageInserted(account, chat_handle, chat_log_entry),
-                    );
+            match self.handle_event(event) {
+                Ok(true) => return,
+                Ok(false) => (),
+                Err(e) => {
+                    error!("{:?}", e)
                 }
-                Event::None => (),
             }
         }
     }
@@ -136,14 +111,19 @@ impl Tocks {
                     warn!("Account passwords are not yet supported");
                 }
 
-                let account = Account::create(name)?;
+                let account = Account::create(name).context("Failed to create account")?;
 
                 let account_id = self.account_manager.add_account(account);
                 let account = self.account_manager.get(&account_id).unwrap();
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
-                    TocksEvent::AccountLoggedIn(account_id, *account.user_handle(), account.address().clone(), account.name().to_string()),
+                    TocksEvent::AccountLoggedIn(
+                        account_id,
+                        *account.user_handle(),
+                        account.address().clone(),
+                        account.name().to_string(),
+                    ),
                 );
             }
             TocksUiEvent::AddFriendByPublicKey(account_id, friend_address) => {
@@ -151,13 +131,13 @@ impl Tocks {
 
                 match account {
                     Some(account) => {
-                        let id = account.add_friend_publickey(&friend_address)?;
+                        let id = account
+                            .add_friend_publickey(&friend_address)
+                            .context("Failed to add tox friend by public key")?;
 
                         Self::send_tocks_event(
                             &self.tocks_event_tx,
-                            TocksEvent::FriendAdded(
-                                account_id,
-                                account.friends()[&id].clone())
+                            TocksEvent::FriendAdded(account_id, account.friends()[&id].clone()),
                         );
                     }
                     None => {
@@ -166,7 +146,9 @@ impl Tocks {
                 }
             }
             TocksUiEvent::Login(account_name, password) => {
-                let account = Account::from_account_name(account_name, password)?;
+                let account = Account::from_account_name(account_name.clone(), password)
+                    .with_context(|| format!("Failed to create account {}", account_name))?;
+
                 let account_id = self.account_manager.add_account(account);
                 let account = &self.account_manager.get(&account_id).unwrap();
 
@@ -176,7 +158,12 @@ impl Tocks {
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
-                    TocksEvent::AccountLoggedIn(account_id, *user_handle, address.clone(), name.to_string()),
+                    TocksEvent::AccountLoggedIn(
+                        account_id,
+                        *user_handle,
+                        address.clone(),
+                        name.to_string(),
+                    ),
                 );
 
                 for friend in account.friends().values() {
@@ -190,14 +177,28 @@ impl Tocks {
                 let account = self.account_manager.get_mut(&account_id);
 
                 if let Some(account) = account {
-                    let entry = account.send_message(&chat_handle, message)?;
+                    let entry = account
+                        .send_message(&chat_handle, message)
+                        .with_context(|| {
+                            format!(
+                                "Failed to send message to {} on account {}",
+                                chat_handle.id(),
+                                account_id.id()
+                            )
+                        })?;
+
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
-                        TocksEvent::MessageInserted(account_id, chat_handle, entry));
+                        TocksEvent::MessageInserted(account_id, chat_handle, entry),
+                    );
                 } else {
-                    error!("Could not send to {} from {}", chat_handle.id(), account_id.id());
+                    error!(
+                        "Could not send to {} from {}",
+                        chat_handle.id(),
+                        account_id.id()
+                    );
                 }
-            },
+            }
             TocksUiEvent::LoadMessages(account_id, chat_handle) => {
                 let account = self.account_manager.get_mut(&account_id);
 
@@ -205,14 +206,40 @@ impl Tocks {
                     let messages = account.load_messages(&chat_handle)?;
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
-                        TocksEvent::MessagesLoaded(account_id, chat_handle, messages));
+                        TocksEvent::MessagesLoaded(account_id, chat_handle, messages),
+                    );
                 } else {
                     error!("Could not find account {}", account_id.id());
                 }
-            },
+            }
         };
 
         Ok(false)
+    }
+
+    fn handle_event(&mut self, event: Event) -> Result<bool> {
+        match event {
+            Event::Ui(request) => self
+                .handle_ui_request(request)
+                .context("Failed to handle UI request"),
+            Event::FriendRequest(account, friend_request) => {
+                info!("Received friend request from {}", friend_request.public_key);
+
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::FriendRequestReceived(account, friend_request),
+                );
+                Ok(false)
+            }
+            Event::ChatMessageInserted(account, chat_handle, chat_log_entry) => {
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::MessageInserted(account, chat_handle, chat_log_entry),
+                );
+                Ok(false)
+            }
+            Event::None => Ok(false),
+        }
     }
 
     fn send_tocks_event(tocks_event_tx: &mpsc::UnboundedSender<TocksEvent>, event: TocksEvent) {
@@ -221,10 +248,10 @@ impl Tocks {
         let _ = tocks_event_tx.send(event);
     }
 
-    async fn next_event(
-        accounts: &mut AccountManager,
-        ui_events: &mut mpsc::UnboundedReceiver<TocksUiEvent>,
-    ) -> Event {
+    async fn next_event(&mut self) -> Event {
+        let ui_events = &mut self.ui_event_rx;
+        let accounts = &mut self.account_manager;
+
         let event = tokio::select! {
             request = ui_events.recv() => {
                 match request {

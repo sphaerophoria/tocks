@@ -73,8 +73,7 @@ impl From<u32> for ToxAddFriendError {
 }
 
 #[derive(Error, Debug)]
-pub enum ToxFriendQueryError
-{
+pub enum ToxFriendQueryError {
     #[error("Invalid argument")]
     InvalidArgument,
     #[error("Friend not found")]

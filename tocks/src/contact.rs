@@ -12,9 +12,17 @@ pub struct Friend {
 }
 
 impl Friend {
-    pub fn new(id: UserHandle, chat_handle: ChatHandle, public_key: PublicKey, name: String) -> Friend {
+    pub fn new(
+        id: UserHandle,
+        chat_handle: ChatHandle,
+        public_key: PublicKey,
+        name: String,
+    ) -> Friend {
         Friend {
-            id, chat_handle, public_key, name
+            id,
+            chat_handle,
+            public_key,
+            name,
         }
     }
 
