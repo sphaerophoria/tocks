@@ -1,5 +1,6 @@
 use crate::{
     error::*,
+    Friend, FriendRequest, Message, Receipt,
     tox::{FriendMessageCallback, FriendRequestCallback, ReceiptCallback},
     FriendRequest,
 };
@@ -115,18 +116,18 @@ impl ToxBuilder {
         self
     }
 
-    pub fn friend_message_callback(mut self, callback: FriendMessageCallback) -> Self {
-        self.inner.friend_message_callback(callback);
+    pub fn friend_message_callback<F: FnMut(Friend, Message) + 'static>(mut self, callback: F) -> Self {
+        self.inner.friend_message_callback(Box::new(callback));
         self
     }
 
-    pub fn friend_request_callback(mut self, callback: FriendRequestCallback) -> Self {
-        self.inner.friend_request_callback(callback);
+    pub fn friend_request_callback<F: FnMut(FriendRequest) + 'static>(mut self, callback: F) -> Self {
+        self.inner.friend_request_callback(Box::new(callback));
         self
     }
 
-    pub fn receipt_callback(mut self, callback: ReceiptCallback) -> Self {
-        self.inner.receipt_callback(callback);
+    pub fn receipt_callback<F: FnMut(Friend, Receipt) + 'static>(mut self, callback: F) -> Self {
+        self.inner.receipt_callback(Box::new(callback));
         self
     }
 

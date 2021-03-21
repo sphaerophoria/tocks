@@ -85,21 +85,21 @@ impl Account {
         let receipt_callback_tx = toxcore_callback_tx.clone();
 
         let mut tox = builder
-            .friend_message_callback(Box::new(move |friend, message| {
+            .friend_message_callback(move |friend, message| {
                 toxcore_callback_tx
                     .send(ToxCoreCallback::MessageReceived(friend, message))
                     .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
-            }))
-            .friend_request_callback(Box::new(move |request| {
+            })
+            .friend_request_callback(move |request| {
                 friend_request_callback_tx
                     .send(ToxCoreCallback::FriendRequest(request))
                     .unwrap_or_else(|_| error!("Failed to propagate friend request"))
-            }))
-            .receipt_callback(Box::new(move |friend, receipt| {
+            })
+            .receipt_callback(move |friend, receipt| {
                 receipt_callback_tx
                     .send(ToxCoreCallback::ReadReceipt(friend, receipt))
                     .unwrap_or_else(|_| error!("Failed to propagate receipt"))
-            }))
+            })
             .build()?;
 
         let self_public_key = tox.self_public_key();
