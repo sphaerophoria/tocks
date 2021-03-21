@@ -269,20 +269,15 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
             &mut friend_message_callback,
             &mut self.friend_message_callback,
         );
-        let friend_message_callback =
-            friend_message_callback.ok_or(ToxBuildError::MissingCallbackError)?;
 
         let mut friend_request_callback = None;
         std::mem::swap(
             &mut friend_request_callback,
             &mut self.friend_request_callback,
         );
-        let friend_request_callback =
-            friend_request_callback.ok_or(ToxBuildError::MissingCallbackError)?;
 
         let mut receipt_callback = None;
         std::mem::swap(&mut receipt_callback, &mut self.receipt_callback);
-        let receipt_callback = receipt_callback.ok_or(ToxBuildError::MissingCallbackError)?;
 
         let ret = ToxImpl::new(
             tox_api,

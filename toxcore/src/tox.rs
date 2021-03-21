@@ -152,9 +152,9 @@ impl SysToxMutabilityWrapper {
 /// so we can use it as the toxcore userdata pointer without breaking any
 /// mutability rules
 struct ToxData {
-    friend_request_callback: FriendRequestCallback,
-    friend_message_callback: FriendMessageCallback,
-    receipt_callback: ReceiptCallback,
+    friend_request_callback: Option<FriendRequestCallback>,
+    friend_message_callback: Option<FriendMessageCallback>,
+    receipt_callback: Option<ReceiptCallback>,
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
@@ -184,9 +184,9 @@ impl<Api: ToxApi> ToxImpl<Api> {
     pub(crate) fn new(
         api: Api,
         sys_tox: *mut toxcore_sys::Tox,
-        friend_message_callback: FriendMessageCallback,
-        friend_request_callback: FriendRequestCallback,
-        receipt_callback: ReceiptCallback,
+        friend_message_callback: Option<FriendMessageCallback>,
+        friend_request_callback: Option<FriendRequestCallback>,
+        receipt_callback: Option<ReceiptCallback>,
     ) -> ToxImpl<Api> {
         unsafe {
             api.callback_friend_request(sys_tox, Some(tox_friend_request_callback::<Api>));
@@ -476,7 +476,9 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback<Api: ToxApi>(
         message,
     };
 
-    (*tox_data.data.friend_request_callback)(request);
+    if let Some(callback) = &mut tox_data.data.friend_request_callback {
+        (*callback)(request);
+    }
 }
 
 /// Callback function provided to toxcore for incoming messages.
@@ -517,7 +519,9 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
         data: Arc::clone(&friend_data),
     };
 
-    (*tox_data.data.friend_message_callback)(f, message);
+    if let Some(callback) = &mut tox_data.data.friend_message_callback {
+        (*callback)(f, message);
+    }
 }
 
 pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
@@ -541,7 +545,9 @@ pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
         data: Arc::clone(&friend_data),
     };
 
-    (*tox_data.data.receipt_callback)(f, Receipt { id: message_id });
+    if let Some(callback) = &mut tox_data.data.receipt_callback {
+        (*callback)(f, Receipt { id: message_id });
+    }
 }
 
 #[cfg(test)]
