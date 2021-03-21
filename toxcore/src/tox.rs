@@ -57,17 +57,15 @@ pub type ReceiptCallback = Box<dyn FnMut(Friend, Receipt)>;
 /// # use toxcore::Tox;
 /// # async fn run_tox() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a tox instance
-/// let mut tox = Tox::builder()?.build()?;
-/// // Set up handlers
-/// let mut friend_requests = tox.friend_requests();
-/// let friend_request_handler = async {
-///     while let Ok(request) = friend_requests.recv().await {
-///         // Do whatever you want in response to the friend request
-///     }
-/// };
+/// let mut tox = Tox::builder()?
+///    // Setup handlers
+///    .friend_request_callback(|friend_request| {
+///        // Do what you want in response to the friend request
+///    })
+///    .build()?;
 ///
 /// // Start the main toxcore loop
-/// tokio::join!(tox.run(), friend_request_handler);
+/// tox.run().await;
 /// # Ok(())
 /// # }
 /// ```
@@ -554,7 +552,7 @@ pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
 pub(crate) mod tests {
     use super::*;
     use crate::sys::MockToxApi as MockSysToxApi;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
 
     pub(crate) struct ToxFixture {
         tox: ToxImpl<MockSysToxApi>,
@@ -579,6 +577,10 @@ pub(crate) mod tests {
                 .once();
 
             mock.expect_callback_friend_message()
+                .return_const(())
+                .once();
+
+            mock.expect_callback_friend_read_receipt()
                 .return_const(())
                 .once();
 
@@ -618,7 +620,7 @@ pub(crate) mod tests {
                     true
                 });
 
-            let tox = ToxImpl::new(mock, std::ptr::null_mut());
+            let tox = ToxImpl::new(mock, std::ptr::null_mut(), None, None, None);
 
             ToxFixture {
                 tox,
@@ -683,13 +685,18 @@ pub(crate) mod tests {
 
         let mut fixture = ToxFixture::new(mock);
 
-        let mut friend_requests = fixture.tox.friend_requests();
         let default_peer_pk = fixture.default_peer_pk.clone();
-        let confirm_friend_request = async {
-            let friend_request = friend_requests.recv().await.unwrap();
+
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_called_clone = Arc::clone(&callback_called);
+
+        use std::sync::atomic::Ordering;
+        // Hack in the friend request callback instead of making a fixture builder
+        fixture.tox.data.friend_request_callback = Some(Box::new(move |friend_request| {
+            callback_called_clone.store(true, Ordering::Relaxed);
             assert_eq!(friend_request.message, message_str);
             assert_eq!(friend_request.public_key, default_peer_pk);
-        };
+        }));
 
         let mut callback_data = CallbackData {
             api: &fixture.tox.api,
@@ -707,7 +714,7 @@ pub(crate) mod tests {
             );
         }
 
-        confirm_friend_request.await;
+        assert!(callback_called.load(Ordering::Relaxed));
 
         Ok(())
     }
