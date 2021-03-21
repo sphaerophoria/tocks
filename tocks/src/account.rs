@@ -1,5 +1,5 @@
 use crate::{
-    contact::Friend,
+    contact::{Friend, UserManager},
     storage::{ChatHandle, ChatLogEntry, Storage, UserHandle},
     Event, APP_DIRS,
 };
@@ -7,13 +7,11 @@ use crate::{
 use toxcore::{FriendRequest, Message, PublicKey, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Result};
-use broadcast::Receiver;
-use futures::{stream::Stream, FutureExt};
+use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
-use tokio::sync::broadcast;
-use tokio_stream::StreamExt;
+use tokio::sync::mpsc;
 
 use std::{
     collections::HashMap,
@@ -21,9 +19,6 @@ use std::{
     io::Read,
     path::PathBuf,
 };
-
-pub type Friends = HashMap<UserHandle, Friend>;
-pub type ToxFriends = HashMap<ChatHandle, toxcore::Friend>;
 
 lazy_static! {
     pub static ref TOX_SAVE_DIR: PathBuf = AppDirs::new(Some("tox"), false).unwrap().config_dir;
@@ -34,30 +29,29 @@ pub(crate) enum AccountEvent {
     ChatMessageInserted(ChatHandle, ChatLogEntry),
     None,
 }
-type IncomingMessage = (ChatHandle, UserHandle, Message);
-type IncomingMessagesStream = Box<dyn Stream<Item = Result<IncomingMessage>> + Unpin + Send>;
+
+enum ToxCoreCallback
+{
+    MessageReceived(toxcore::Friend, Message),
+    FriendRequest(FriendRequest),
+}
 
 pub(crate) struct Account {
     tox: Tox,
-    friends: Friends,
-    tox_friends: ToxFriends,
+    user_manager: UserManager,
     storage: Storage,
     user_handle: UserHandle,
     public_key: PublicKey,
     tox_id: ToxId,
     name: String,
-    friend_requests: broadcast::Receiver<FriendRequest>,
-    incoming_messages: Vec<IncomingMessagesStream>,
+    toxcore_callback_rx: mpsc::UnboundedReceiver<ToxCoreCallback>,
 }
 
 impl Account {
     pub fn create(_name: String) -> Result<Account> {
         warn!("Created accounts are not saved and cannot set their names yet");
-        let tox = Tox::builder()?.build()?;
 
-        info!("Created account: {}", tox.self_address());
-
-        Self::from_tox(tox)
+        Self::from_builder(Tox::builder()?)
     }
 
     pub fn from_reader<T: Read>(account_buf: &mut T, password: String) -> Result<Account> {
@@ -68,13 +62,10 @@ impl Account {
             return Err(anyhow!("Password support is not implemented"));
         }
 
-        let tox = Tox::builder()?
-            .savedata(toxcore::SaveData::ToxSave(&account_vec))
-            .build()?;
+        let builder = Tox::builder()?
+            .savedata(toxcore::SaveData::ToxSave(&account_vec));
 
-        info!("Logged into account: {}", tox.self_address());
-
-        Self::from_tox(tox)
+        Self::from_builder(builder)
     }
 
     pub fn from_account_name(mut account_name: String, password: String) -> Result<Account> {
@@ -87,8 +78,23 @@ impl Account {
         Self::from_reader(&mut account_file, password)
     }
 
-    pub fn from_tox(mut tox: Tox) -> Result<Account> {
-        let friend_requests = tox.friend_requests();
+    pub fn from_builder(builder: toxcore::ToxBuilder) -> Result<Account> {
+
+        let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
+
+        let toxcore_callback_tx_clone = toxcore_callback_tx.clone();
+
+        let mut tox = builder
+            .friend_message_callback(Box::new(move |friend, message| {
+                toxcore_callback_tx.send(ToxCoreCallback::MessageReceived(friend, message))
+                    .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
+            }))
+            .friend_request_callback(Box::new(move |request| {
+                toxcore_callback_tx_clone.send(ToxCoreCallback::FriendRequest(request))
+                    .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
+            }))
+            .build()?;
+
         let self_public_key = tox.self_public_key();
         let tox_id = tox.self_address();
         let mut name = tox.self_name();
@@ -120,44 +126,35 @@ impl Account {
 
         let tox_friends = tox.friends().context("Failed to initialize tox friends")?;
 
-        let mut incoming_messages = Vec::new();
-        let mut tox_friend_map = HashMap::new();
+        let mut user_manager = UserManager::new();
 
         for tox_friend in tox_friends {
-            let friend_incoming_messages = tox.incoming_friend_messages(&tox_friend);
+            let friend = match friends.remove(&tox_friend.public_key()) {
+                Some(f) => f,
+                None => {
+                    storage
+                        .add_friend(tox_friend.public_key(), tox_friend.name())
+                        .context("Failed to add friend to storage")?
+                }
+            };
 
-            if friends.get(&tox_friend.public_key()).is_none() {
-                let friend = storage
-                    .add_friend(tox_friend.public_key(), tox_friend.name())
-                    .context("Failed to add friend to storage")?;
-                friends.insert(friend.public_key().clone(), friend);
-            }
-
-            let friend = &friends[&tox_friend.public_key()];
-            let chat_handle = *friend.chat_handle();
-            let user_handle = *friend.id();
-
-            let mapped_incoming_messages = Box::new(map_message_receiver(
-                chat_handle,
-                user_handle,
-                friend_incoming_messages,
-            ));
-            let mapped_incoming_messages =
-                mapped_incoming_messages as Box<dyn Stream<Item = _> + Send + Unpin>;
-
-            incoming_messages.push(mapped_incoming_messages);
-
-            tox_friend_map.insert(*friend.chat_handle(), tox_friend);
+            user_manager.add_friend(friend, tox_friend);
         }
 
-        let friends = friends.into_iter().map(|(_, f)| (*f.id(), f)).collect();
+        // Remaining friends need to be added. Assume we've already sent a
+        // friend request in the past. Even if we wanted to send again, we don't
+        // have the toxid to back it up
+        for (_, friend) in friends {
+            let tox_friend = tox.add_friend_norequest(friend.public_key())
+                .context("Failed to add missing tox friend")?;
+
+            user_manager.add_friend(friend, tox_friend);
+        }
 
         Ok(Account {
             tox,
-            friends,
-            tox_friends: tox_friend_map,
-            friend_requests,
-            incoming_messages,
+            user_manager,
+            toxcore_callback_rx,
             storage,
             user_handle: self_user_handle,
             public_key: self_public_key,
@@ -182,11 +179,11 @@ impl Account {
         &self.name
     }
 
-    pub fn friends(&self) -> &Friends {
-        &self.friends
+    pub fn friends(&self) -> impl Iterator<Item=&Friend> {
+        self.user_manager.friends()
     }
 
-    pub fn add_friend_publickey(&mut self, friend_key: &PublicKey) -> Result<UserHandle> {
+    pub fn add_friend_publickey(&mut self, friend_key: &PublicKey) -> Result<&Friend> {
         // FIXME: eventually need to sync state with toxcore, re-add from DB etc.
         let tox_friend = self
             .tox
@@ -197,29 +194,12 @@ impl Account {
 
         // FIXME: In the future once we support offline friends we should swap
         // the order to do this before adding to toxcore
-
         let friend = self
             .storage
             .add_friend(public_key, tox_friend.name())
             .context("Failed to add friend to storage")?;
 
-        let chat_handle = *friend.chat_handle();
-        let user_handle = *friend.id();
-
-        self.friends.insert(*friend.id(), friend);
-
-        let stream = map_message_receiver(
-            chat_handle,
-            user_handle,
-            self.tox
-                .incoming_friend_messages(&self.tox_friends[&chat_handle]),
-        );
-        let stream = Box::new(stream);
-
-        self.incoming_messages
-            .push(Box::new(stream as Box<dyn Stream<Item = _> + Send + Unpin>));
-
-        Ok(user_handle)
+        Ok(self.user_manager.add_friend(friend, tox_friend).0)
     }
 
     pub fn send_message(
@@ -242,7 +222,8 @@ impl Account {
             .storage
             .push_message(chat_handle, self.user_handle, message)
             .context("Failed to insert message into storage")?;
-        let tox_friend = &self.tox_friends[&chat_handle];
+
+        let tox_friend = self.user_manager.tox_friend_by_chat_handle(&chat_handle);
 
         let receipt = self
             .tox
@@ -270,36 +251,21 @@ impl Account {
         self.storage.load_messages(chat_handle)
     }
 
-    async fn wait_for_incoming_message(
-        incoming_messages: &mut Vec<IncomingMessagesStream>,
-    ) -> Result<IncomingMessage> {
-        if incoming_messages.is_empty() {
-            futures::future::pending::<()>().await;
-        }
-
-        let next_incoming_messages = incoming_messages
-            .iter_mut()
-            .map(|item| async move { item.next().await.unwrap() }.boxed());
-
-        futures::future::select_all(next_incoming_messages).await.0
-    }
-
     pub(crate) async fn run<'a>(&'a mut self) -> Result<AccountEvent> {
         tokio::select! {
             _ = self.tox.run() => { Ok(AccountEvent::None) }
-            friend_request = self.friend_requests.recv() => {
-                let friend_request = friend_request
-                    .context("Failed to retrieve incoming friend request")?;
-                Ok(AccountEvent::FriendRequest(friend_request))
-            }
-            result = Self::wait_for_incoming_message(&mut self.incoming_messages) => {
-                if let Ok((chat_handle, user_handle, message)) = result {
-                    let chat_log_entry = self.storage.push_message(&chat_handle, user_handle, message)
-                        .context("Failed to insert incoming message into storage")?;
-                    Ok(AccountEvent::ChatMessageInserted(chat_handle, chat_log_entry))
-                }
-                else {
-                    Ok(AccountEvent::None)
+            toxcore_callback = self.toxcore_callback_rx.recv() => {
+                match toxcore_callback {
+                    Some(ToxCoreCallback::MessageReceived(tox_friend, message)) => {
+                        let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
+                        let chat_log_entry = self.storage.push_message(friend.chat_handle(), *friend.id(), message)
+                            .context("Failed to insert incoming message into storage")?;
+                        Ok(AccountEvent::ChatMessageInserted(*friend.chat_handle(), chat_log_entry))
+                    },
+                    Some(ToxCoreCallback::FriendRequest(request)) => {
+                        Ok(AccountEvent::FriendRequest(request))
+                    }
+                    None => Ok(AccountEvent::None),
                 }
             }
         }
@@ -398,16 +364,4 @@ pub fn retrieve_account_list() -> Result<Vec<String>> {
     accounts.sort();
 
     Ok(accounts)
-}
-
-fn map_message_receiver(
-    chat_handle: ChatHandle,
-    user_handle: UserHandle,
-    receiver: Receiver<Message>,
-) -> impl Stream<Item = Result<IncomingMessage>> + Unpin {
-    let stream = tokio_stream::wrappers::BroadcastStream::new(receiver);
-    stream.map(move |res| {
-        res.map(|message| (chat_handle, user_handle, message))
-            .map_err(|_| anyhow!("Failed to retrieve incoming message"))
-    })
 }

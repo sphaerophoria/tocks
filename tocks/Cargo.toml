@@ -17,5 +17,4 @@ platform-dirs = "0.3.0"
 rusqlite = { version = "0.24.2", features = ["chrono"] }
 thiserror = "1.0.24"
 tokio = { version = "1.2.0", features = ["sync"] }
-tokio-stream = { version = "0.1.4", features = ["sync"] }
 toxcore = { path = "../toxcore" }

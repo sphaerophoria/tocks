@@ -131,13 +131,13 @@ impl Tocks {
 
                 match account {
                     Some(account) => {
-                        let id = account
+                        let friend = account
                             .add_friend_publickey(&friend_address)
                             .context("Failed to add tox friend by public key")?;
 
                         Self::send_tocks_event(
                             &self.tocks_event_tx,
-                            TocksEvent::FriendAdded(account_id, account.friends()[&id].clone()),
+                            TocksEvent::FriendAdded(account_id, friend.clone()),
                         );
                     }
                     None => {
@@ -166,7 +166,7 @@ impl Tocks {
                     ),
                 );
 
-                for friend in account.friends().values() {
+                for friend in account.friends() {
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
                         TocksEvent::FriendAdded(account_id, friend.clone()),

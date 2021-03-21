@@ -215,22 +215,6 @@ impl Storage {
         Ok(UserHandle { user_id })
     }
 
-    pub fn user_handle(&self, public_key: &PublicKey) -> Result<UserHandle> {
-        let id = self
-            .connection
-            .query_row(
-                "SELECT id FROM users WHERE public_key = ?1",
-                params![public_key.as_bytes()],
-                |row| {
-                    let id: i64 = row.get(0)?;
-                    Ok(id)
-                },
-            )
-            .context("Failed to retrieve user from DB")?;
-
-        Ok(UserHandle { user_id: id })
-    }
-
     pub fn push_message(
         &mut self,
         chat: &ChatHandle,

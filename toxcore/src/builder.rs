@@ -1,4 +1,4 @@
-use crate::error::*;
+use crate::{FriendRequest, error::*, tox::{FriendMessageCallback, FriendRequestCallback}};
 use crate::{
     sys::{ToxApi, ToxApiImpl, ToxOptionsApi, ToxOptionsSys},
     tox::{Tox, ToxImpl},
@@ -111,7 +111,18 @@ impl ToxBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Tox, ToxCreationError> {
+    pub fn friend_message_callback(mut self, callback: FriendMessageCallback) -> Self {
+        self.inner.friend_message_callback(callback);
+        self
+    }
+
+    pub fn friend_request_callback(mut self, callback: FriendRequestCallback) -> Self {
+        self.inner.friend_request_callback(callback);
+        self
+    }
+
+
+    pub fn build(self) -> Result<Tox, ToxBuildError> {
         Ok(Tox::new(self.inner.build(ToxApiImpl)?))
     }
 }
@@ -123,6 +134,8 @@ impl ToxBuilder {
 struct ToxBuilderImpl<Api: ToxOptionsApi> {
     api: Api,
     options: *mut Tox_Options,
+    friend_message_callback: Option<FriendMessageCallback>,
+    friend_request_callback: Option<FriendRequestCallback>,
     log: bool,
 }
 
@@ -138,6 +151,8 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         Ok(ToxBuilderImpl {
             api,
             options,
+            friend_message_callback: None,
+            friend_request_callback: None,
             log: false,
         })
     }
@@ -193,6 +208,14 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         self.log = enable;
     }
 
+    pub fn friend_message_callback(&mut self, callback: FriendMessageCallback) {
+        self.friend_message_callback = Some(callback);
+    }
+
+    pub fn friend_request_callback(&mut self, callback: FriendRequestCallback) {
+        self.friend_request_callback = Some(callback);
+    }
+
     fn map_err_new(err: TOX_ERR_NEW) -> ToxCreationError {
         match err {
             TOX_ERR_NEW_NULL => return ToxCreationError::Null,
@@ -210,9 +233,9 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
 
     /// Create the [`Tox`] instance
     pub fn build<ToxApiImpl: ToxApi>(
-        self,
+        mut self,
         tox_api: ToxApiImpl,
-    ) -> Result<ToxImpl<ToxApiImpl>, ToxCreationError> {
+    ) -> Result<ToxImpl<ToxApiImpl>, ToxBuildError> {
         if self.log {
             unsafe {
                 self.api
@@ -224,10 +247,18 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         let sys_tox = unsafe { tox_api.new(self.options, &mut err) };
 
         if err != TOX_ERR_NEW_OK {
-            return Err(Self::map_err_new(err));
+            return Err(From::from(Self::map_err_new(err)));
         }
 
-        let ret = ToxImpl::new(tox_api, sys_tox);
+        let mut friend_message_callback = None;
+        std::mem::swap(&mut friend_message_callback, &mut self.friend_message_callback);
+        let friend_message_callback = friend_message_callback.ok_or(ToxBuildError::MissingCallbackError)?;
+
+        let mut friend_request_callback = None;
+        std::mem::swap(&mut friend_request_callback, &mut self.friend_request_callback);
+        let friend_request_callback = friend_request_callback.ok_or(ToxBuildError::MissingCallbackError)?;
+
+        let ret = ToxImpl::new(tox_api, sys_tox, friend_message_callback, friend_request_callback);
 
         Ok(ret)
     }

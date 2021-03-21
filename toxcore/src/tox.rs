@@ -11,7 +11,7 @@ use crate::sys::{ToxApi, ToxApiImpl};
 
 use paste::paste;
 
-use tokio::{sync::broadcast, time};
+use tokio::time;
 
 use std::{
     collections::HashMap,
@@ -36,6 +36,9 @@ macro_rules! impl_self_key_getter {
         }
     };
 }
+
+pub type FriendMessageCallback = Box<dyn FnMut(Friend, Message)>;
+pub type FriendRequestCallback = Box<dyn FnMut(FriendRequest)>;
 
 /// A tox account
 ///
@@ -110,11 +113,6 @@ impl Tox {
         self.inner.friends()
     }
 
-    /// Stream of incoming friend requests
-    pub fn friend_requests(&self) -> broadcast::Receiver<FriendRequest> {
-        self.inner.friend_requests()
-    }
-
     /// Adds a friend without issuing a friend request. This can be called in
     /// response to a friend request, or if two users agree to add eachother via
     /// a different channel
@@ -123,10 +121,6 @@ impl Tox {
         public_key: &PublicKey,
     ) -> Result<Friend, ToxAddFriendError> {
         self.inner.add_friend_norequest(public_key)
-    }
-
-    pub fn incoming_friend_messages(&mut self, friend: &Friend) -> broadcast::Receiver<Message> {
-        self.inner.incoming_friend_messages(friend)
     }
 
     pub fn send_message(
@@ -157,8 +151,8 @@ impl SysToxMutabilityWrapper {
 /// so we can use it as the toxcore userdata pointer without breaking any
 /// mutability rules
 struct ToxData {
-    friend_request_tx: broadcast::Sender<FriendRequest>,
-    friend_message_tx: HashMap<u32, broadcast::Sender<Message>>,
+    friend_request_callback: FriendRequestCallback,
+    friend_message_callback: FriendMessageCallback,
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
@@ -185,10 +179,12 @@ unsafe impl<Api: ToxApi> Send for ToxImpl<Api> {}
 unsafe impl<Api: ToxApi> Sync for ToxImpl<Api> {}
 
 impl<Api: ToxApi> ToxImpl<Api> {
-    pub(crate) fn new(api: Api, sys_tox: *mut toxcore_sys::Tox) -> ToxImpl<Api> {
-        // FIXME: is 100 a sane size here?
-        let (friend_request_tx, _) = broadcast::channel(100);
-
+    pub(crate) fn new(
+        api: Api,
+        sys_tox: *mut toxcore_sys::Tox,
+        friend_message_callback: FriendMessageCallback,
+        friend_request_callback: FriendRequestCallback,
+    ) -> ToxImpl<Api> {
         unsafe {
             api.callback_friend_request(sys_tox, Some(tox_friend_request_callback::<Api>));
             api.callback_friend_message(sys_tox, Some(tox_friend_message_callback::<Api>));
@@ -202,8 +198,8 @@ impl<Api: ToxApi> ToxImpl<Api> {
             api: api,
             sys_tox: SysToxMutabilityWrapper { sys_tox },
             data: ToxData {
-                friend_request_tx,
-                friend_message_tx: HashMap::new(),
+                friend_request_callback,
+                friend_message_callback,
                 friend_data: HashMap::new(),
             },
         }
@@ -277,10 +273,6 @@ impl<Api: ToxApi> ToxImpl<Api> {
         }
     }
 
-    pub fn friend_requests(&self) -> broadcast::Receiver<FriendRequest> {
-        self.data.friend_request_tx.subscribe()
-    }
-
     pub fn add_friend_norequest(
         &mut self,
         public_key: &PublicKey,
@@ -306,19 +298,6 @@ impl<Api: ToxApi> ToxImpl<Api> {
 
             self.friend_from_id(friend_num)
         }
-    }
-
-    pub fn incoming_friend_messages(&mut self, friend: &Friend) -> broadcast::Receiver<Message> {
-        let message_tx = self
-            .data
-            .friend_message_tx
-            .entry(friend.id)
-            .or_insert_with(|| {
-                let channel = broadcast::channel(100);
-                channel.0
-            });
-
-        message_tx.subscribe()
     }
 
     pub fn send_message(
@@ -457,7 +436,7 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback<Api: ToxApi>(
     length: u64,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &*(user_data as *mut CallbackData<Api>);
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
 
     let public_key_length = tox_data.api.public_key_size() as usize;
 
@@ -489,11 +468,7 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback<Api: ToxApi>(
         message,
     };
 
-    let friend_request_tx = &tox_data.data.friend_request_tx;
-
-    if let Err(e) = friend_request_tx.send(request) {
-        error!("Failed to propagate friend request: {}", e);
-    }
+    (*tox_data.data.friend_request_callback)(request);
 }
 
 /// Callback function provided to toxcore for incoming messages.
@@ -507,7 +482,7 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
     length: u64,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &*(user_data as *mut CallbackData<Api>);
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
 
     let message_content =
         String::from_utf8_lossy(std::slice::from_raw_parts(message, length as usize)).to_string();
@@ -521,13 +496,22 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
         }
     };
 
-    let message_sender = tox_data.data.friend_message_tx.get(&friend_number);
 
-    if let Some(message_sender) = message_sender {
-        if let Err(e) = message_sender.send(message) {
-            error!("Failed to propagate incoming message: {}", e);
+    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return
         }
-    }
+    };
+
+
+    let f = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    (*tox_data.data.friend_message_callback)(f, message);
 }
 
 #[cfg(test)]
