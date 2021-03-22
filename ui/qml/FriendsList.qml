@@ -1,30 +1,39 @@
 import QtQuick 2.4
 import QtQuick.Layouts 1.11
 import QtQuick.Controls 2.15
+import "Colors.js" as Colors
 
-ColumnLayout {
+Rectangle {
     id: root
 
     property var account
 
     signal chatSelected(int chat_id);
 
-    Connections {
-        target: tocks
+    color: Colors.sidebarColor
 
-        function onFriendAdded(accountId, friend) {
-            if (root.account.id !== account.id) {
-                return
+    ColumnLayout {
+
+        anchors.fill: parent
+        spacing: 0
+
+        Connections {
+            target: tocks
+
+            function onFriendAdded(accountId, friend) {
+                if (root.account.id !== account.id) {
+                    return
+                }
+
+                friendModel.append(friend)
             }
-
-            friendModel.append(friend)
         }
-    }
 
-    ScrollView {
-        Layout.fillHeight: true
 
         ListView {
+
+            Layout.fillHeight: true
+
             id: friendList
             onCurrentItemChanged: {
                 root.chatSelected(friendModel.get(currentIndex).chatId)
@@ -35,13 +44,18 @@ ColumnLayout {
             }
 
             delegate: Rectangle {
-                width: 100
-                height: 20
+                width: root.width
+                height: 30
 
-                color: friendList.currentIndex == index ? "lightblue" : "transparent"
+                color: friendList.currentIndex == index ? Colors.sidebarHighlight : "transparent"
 
                 Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+
                     text: model.name
+                    color: Colors.sidebarText
                 }
 
                 MouseArea {
@@ -49,6 +63,8 @@ ColumnLayout {
                     onClicked: friendList.currentIndex = index
                 }
             }
+
+            ScrollBar.vertical: ScrollBar {}
         }
     }
 }

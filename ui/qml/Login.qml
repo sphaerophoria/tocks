@@ -3,6 +3,8 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.11
 import QtQml.Models 2.15
 
+import "Colors.js" as Colors
+
 RowLayout {
     id: root
 
@@ -48,7 +50,7 @@ RowLayout {
             fillMode: Image.PreserveAspectFit
         }
 
-        ComboBox {
+        TocksComboBox {
             id: comboBox
             Layout.fillWidth: true
 
@@ -68,7 +70,7 @@ RowLayout {
             placeholderText: qsTr("Password")
         }
 
-        Button {
+        TocksButton {
             id: loginButton
             Layout.fillWidth: true
             text: qsTr("Login")

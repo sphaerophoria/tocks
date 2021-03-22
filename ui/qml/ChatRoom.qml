@@ -3,52 +3,78 @@ import QtQuick.Controls 2.15
 import QtQml 2.15
 import QtQuick.Layouts 1.11
 
-ColumnLayout {
+import "Colors.js" as Colors
+
+Rectangle {
     id: root
 
-    required property int account
-    required property int chat
+    required property var account
+    required property int chatId
 
+    color: "white"
 
-    ChatLog {
-        Layout.fillHeight: true
-        Layout.fillWidth: true
-        id: chatLog
-    }
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
 
-    RowLayout {
-        Layout.fillWidth: true
-        Layout.fillHeight: false
-        Layout.minimumHeight: 100
-
-        TextArea {
-            id: messageText
+        ChatHeader {
+            chatId: root.chatId
 
             Layout.fillWidth: true
+            Layout.minimumHeight: 40
+        }
+
+        TocksSpacer {
+            Layout.fillWidth: true
+        }
+
+        ChatLog {
+            account: root.account
+
+            z: -1
+
             Layout.fillHeight: true
+            Layout.fillWidth: true
+            id: chatLog
+        }
 
-            horizontalAlignment: TextEdit.AlignLeft
-            placeholderText: "Type message..."
-            wrapMode: TextEdit.Wrap
+        TocksSpacer {
+            Layout.fillWidth: true
+        }
 
-            Keys.onEnterPressed: {
-                tocks.sendMessage(account, chat, text)
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.fillHeight: false
+
+            Layout.minimumHeight: 100
+
+            TextArea {
+                id: messageText
+
+                anchors.fill: parent
+
+                horizontalAlignment: TextEdit.AlignLeft
+                placeholderText: "Type message..."
+                wrapMode: TextEdit.Wrap
+
+                function handleReturn(event) {
+                    if ((event.modifiers & Qt.ShiftModifier)) {
+                        event.accepted = false
+                        return
+                    }
+                    tocks.sendMessage(account.id, chatId, text)
+                    text = ""
+                }
+
+                Keys.onReturnPressed: {
+                    handleReturn(event)
+                }
+
+                Keys.onEnterPressed: {
+                    handleReturn(event)
+                }
             }
         }
 
-        Button {
-            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-            Layout.fillWidth: false
-            Layout.fillHeight: true
-            Layout.preferredHeight: 50
-            Layout.preferredWidth: 100
-
-            onClicked: {
-                tocks.sendMessage(account, chat, messageText.text)
-            }
-
-            text: "Send"
-        }
     }
-
 }

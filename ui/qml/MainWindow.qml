@@ -3,13 +3,30 @@ import QtQuick.Controls 2.15
 import QtQml 2.15
 import QtQuick.Layouts 1.11
 
+import "Colors.js" as Colors
 
 RowLayout  {
+    id: root
+    // Stored as friendCache[accountId][friendId] = Friend
+    property var userCache: ({})
+    property var chatCache: ({})
+
+    spacing: 0
+
     Connections {
         target: tocks
 
         function onAccountActivated(account) {
             accountsModel.append(account)
+            root.userCache[account.id] = {}
+            root.userCache[account.id][account.userId] = account
+
+            root.chatCache[account.id] = {}
+        }
+
+        function onFriendAdded(accountId, friend) {
+            root.userCache[accountId][friend.userId] = friend
+            root.chatCache[accountId][friend.chatId] = {"name": friend.name}
         }
     }
 
@@ -23,41 +40,54 @@ RowLayout  {
         }
     }
 
-    ColumnLayout {
+
+    Rectangle {
         Layout.fillWidth: false
+        Layout.fillHeight: true
+        Layout.preferredWidth: 175
 
-        Layout.maximumWidth: 500
+        color: Colors.sidebarColor
 
-        ComboBox {
-            id: accountSelector
+        ColumnLayout {
+            anchors.fill: parent
 
-            model: accountsModel
-            textRole: "name"
-        }
+            spacing: 0
 
-        FriendsList {
-            id: friendsList
+            TocksComboBox {
+                id: accountSelector
 
-            account: accountsModel.get(accountSelector.currentIndex)
+                Layout.fillWidth: true
 
-            Layout.fillHeight: true
-            Layout.fillWidth: true
-        }
+                model: accountsModel
+                textRole: "name"
+            }
 
-        Connections {
-            target: friendsList
+            FriendsList {
+                id: friendsList
 
-            function onChatSelected(chat_id) {
-                tocks.updateChatModel(friendsList.account.id, chat_id)
+                account: accountsModel.get(accountSelector.currentIndex)
+
+                Layout.fillHeight: true
+                Layout.fillWidth: true
+            }
+
+            Connections {
+                target: friendsList
+
+                function onChatSelected(chat_id) {
+                    tocks.updateChatModel(friendsList.account.id, chat_id)
+                }
             }
         }
     }
 
     ChatRoom {
-        account: accountsModel.get(accountSelector.currentIndex).id
-        chat: chatModel.chat
-    }
+        Layout.fillHeight: true
+        Layout.fillWidth: true
 
+        account: accountsModel.get(accountSelector.currentIndex)
+        chatId: chatModel.chat
+    }
 }
 
 

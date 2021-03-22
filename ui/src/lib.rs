@@ -14,6 +14,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use std::{
     str::FromStr,
+    collections::HashMap,
     sync::{Arc, Barrier},
     thread::JoinHandle,
 };
@@ -35,6 +36,9 @@ struct ChatModel {
 }
 
 impl ChatModel {
+    const MESSAGE_ROLE: i32 = USER_ROLE;
+    const SENDER_ID_ROLE: i32 = USER_ROLE + 1;
+
     fn set_content(&mut self, account_id: AccountId, chat: ChatHandle, content: Vec<ChatLogEntry>) {
         self.account = account_id.id();
         self.accountChanged();
@@ -108,7 +112,7 @@ impl QAbstractItemModel for ChatModel {
         1
     }
 
-    fn data(&self, index: QModelIndex, _role: i32) -> QVariant {
+    fn data(&self, index: QModelIndex, role: i32) -> QVariant {
         debug!("Returning line, {}", index.row());
 
         let entry = self.chat_log.get(index.row() as usize);
@@ -116,15 +120,33 @@ impl QAbstractItemModel for ChatModel {
         if entry.is_none() {
             return QVariant::default();
         }
-        let entry = entry.unwrap();
-        let message = entry.message();
 
-        if let Message::Normal(message) = message {
-            let entry_string = format!("{}: {} ({})", entry.sender(), message, entry.complete());
-            QString::from(entry_string).to_qvariant()
-        } else {
-            QVariant::default()
+        let entry = entry.unwrap();
+
+        match role {
+            Self::MESSAGE_ROLE => {
+                let message = entry.message();
+
+                if let Message::Normal(message) = message {
+                    QString::from(message.as_ref()).to_qvariant()
+                } else {
+                    QVariant::default()
+                }
+            },
+            Self::SENDER_ID_ROLE => {
+                entry.sender().id().to_qvariant()
+            }
+            _ => QVariant::default()
         }
+    }
+
+    fn role_names(&self) -> HashMap<i32, QByteArray> {
+        let mut ret = HashMap::new();
+
+        ret.insert(Self::MESSAGE_ROLE, "message".into());
+        ret.insert(Self::SENDER_ID_ROLE, "senderId".into());
+
+        ret
     }
 }
 
@@ -235,7 +257,7 @@ impl QTocks {
     ) {
         let qaccount = Account {
             id: account_id.id(),
-            userHandle: user.id(),
+            userId: user.id(),
             toxId: address.to_string().into(),
             name: name.into(),
         };
