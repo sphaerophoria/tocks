@@ -70,8 +70,8 @@ impl ChatModel {
     fn push_message(&mut self, entry: ChatLogEntry) {
         (self as &dyn QAbstractItemModel).begin_insert_rows(
             QModelIndex::default(),
-            (self.chat_log.len()) as i32,
-            (self.chat_log.len()) as i32,
+            0,
+            0,
         );
 
         self.chat_log.push(entry);
@@ -92,6 +92,10 @@ impl ChatModel {
 
         let qidx = (self as &dyn QAbstractItemModel).create_index(idx as i32, 0, 0);
         (self as &dyn QAbstractItemModel).data_changed(qidx, qidx);
+    }
+
+    fn reversed_index(&self, idx: i32) -> usize {
+        self.chat_log.len() - idx as usize - 1
     }
 }
 
@@ -115,7 +119,7 @@ impl QAbstractItemModel for ChatModel {
     fn data(&self, index: QModelIndex, role: i32) -> QVariant {
         debug!("Returning line, {}", index.row());
 
-        let entry = self.chat_log.get(index.row() as usize);
+        let entry = self.chat_log.get(self.reversed_index(index.row()));
 
         if entry.is_none() {
             return QVariant::default();

@@ -1,7 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQml 2.15
-import QtQuick.Layouts 1.11
 import "Colors.js" as Colors
 
 
@@ -13,9 +12,9 @@ ListView {
 
     required property var account
     width: 600
-    Layout.minimumWidth: 600
 
     spacing: 10
+    verticalLayoutDirection: ListView.BottomToTop
 
     // Global chatModel defined in rust
     model: chatModel
