@@ -1,5 +1,5 @@
 use crate::{
-    builder::ToxBuilder, error::*, Friend, FriendData, FriendRequest, Message, PublicKey, Receipt,
+    Event, builder::ToxBuilder, error::*, Friend, FriendData, FriendRequest, Message, PublicKey, Receipt,
     SecretKey, ToxId,
 };
 
@@ -37,9 +37,7 @@ macro_rules! impl_self_key_getter {
     };
 }
 
-pub type FriendMessageCallback = Box<dyn FnMut(Friend, Message)>;
-pub type FriendRequestCallback = Box<dyn FnMut(FriendRequest)>;
-pub type ReceiptCallback = Box<dyn FnMut(Friend, Receipt)>;
+pub type ToxEventCallback = Box<dyn FnMut(Event)>;
 
 /// A tox account
 ///
@@ -59,8 +57,8 @@ pub type ReceiptCallback = Box<dyn FnMut(Friend, Receipt)>;
 /// // Create a tox instance
 /// let mut tox = Tox::builder()?
 ///    // Setup handlers
-///    .friend_request_callback(|friend_request| {
-///        // Do what you want in response to the friend request
+///    .event_callback(|event| {
+///        // Do what you want in response to the event
 ///    })
 ///    .build()?;
 ///
@@ -150,9 +148,7 @@ impl SysToxMutabilityWrapper {
 /// so we can use it as the toxcore userdata pointer without breaking any
 /// mutability rules
 struct ToxData {
-    friend_request_callback: Option<FriendRequestCallback>,
-    friend_message_callback: Option<FriendMessageCallback>,
-    receipt_callback: Option<ReceiptCallback>,
+    event_callback: Option<ToxEventCallback>,
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
@@ -182,9 +178,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
     pub(crate) fn new(
         api: Api,
         sys_tox: *mut toxcore_sys::Tox,
-        friend_message_callback: Option<FriendMessageCallback>,
-        friend_request_callback: Option<FriendRequestCallback>,
-        receipt_callback: Option<ReceiptCallback>,
+        event_callback: Option<ToxEventCallback>,
     ) -> ToxImpl<Api> {
         unsafe {
             api.callback_friend_request(sys_tox, Some(tox_friend_request_callback::<Api>));
@@ -203,9 +197,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
             api: api,
             sys_tox: SysToxMutabilityWrapper { sys_tox },
             data: ToxData {
-                friend_request_callback,
-                friend_message_callback,
-                receipt_callback,
+                event_callback,
                 friend_data: HashMap::new(),
             },
         }
@@ -474,8 +466,8 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback<Api: ToxApi>(
         message,
     };
 
-    if let Some(callback) = &mut tox_data.data.friend_request_callback {
-        (*callback)(request);
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::FriendRequest(request));
     }
 }
 
@@ -517,12 +509,12 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback<Api: ToxApi>(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.friend_message_callback {
-        (*callback)(f, message);
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::MessageReceived(f, message));
     }
 }
 
-pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
+unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
     _tox: *mut toxcore_sys::Tox,
     friend_number: u32,
     message_id: u32,
@@ -543,8 +535,8 @@ pub(crate) unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.receipt_callback {
-        (*callback)(f, Receipt { id: message_id });
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::ReadReceipt(f, Receipt { id: message_id }));
     }
 }
 
@@ -620,7 +612,7 @@ pub(crate) mod tests {
                     true
                 });
 
-            let tox = ToxImpl::new(mock, std::ptr::null_mut(), None, None, None);
+            let tox = ToxImpl::new(mock, std::ptr::null_mut(), None);
 
             ToxFixture {
                 tox,
@@ -692,10 +684,15 @@ pub(crate) mod tests {
 
         use std::sync::atomic::Ordering;
         // Hack in the friend request callback instead of making a fixture builder
-        fixture.tox.data.friend_request_callback = Some(Box::new(move |friend_request| {
+        fixture.tox.data.event_callback = Some(Box::new(move |event| {
             callback_called_clone.store(true, Ordering::Relaxed);
-            assert_eq!(friend_request.message, message_str);
-            assert_eq!(friend_request.public_key, default_peer_pk);
+            match event {
+                Event::FriendRequest(friend_request) => {
+                    assert_eq!(friend_request.message, message_str);
+                    assert_eq!(friend_request.public_key, default_peer_pk);
+                }
+                _ => assert!(false),
+            }
         }));
 
         let mut callback_data = CallbackData {

@@ -122,3 +122,9 @@ pub enum Message {
     Normal(String),
     Action(String),
 }
+
+pub enum Event {
+    MessageReceived(Friend, Message),
+    FriendRequest(FriendRequest),
+    ReadReceipt(Friend, Receipt),
+}

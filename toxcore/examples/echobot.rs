@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use toxcore::{Friend, Message, PublicKey, SaveData};
+use toxcore::{Event, Friend, Message, PublicKey, SaveData};
 
 use tokio::sync::mpsc;
 
@@ -7,12 +7,6 @@ use tokio::sync::mpsc;
 enum Options {
     New {},
     Load { key: String },
-}
-
-enum Event {
-    IncomingMessage(Friend, Message),
-    IncomingFriendRequest(PublicKey),
-    None,
 }
 
 #[tokio::main]
@@ -27,11 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let builder = toxcore::Tox::builder()?
         .log(true)
-        .friend_message_callback(move |friend, message| {
-            let _ = message_tx.send(Event::IncomingMessage(friend, message));
-        })
-        .friend_request_callback(move |request| {
-            let _ = event_tx.send(Event::IncomingFriendRequest(request.public_key));
+        .event_callback(move |event| {
+            let _ = message_tx.send(event);
         });
 
     let mut tox = match opt {
@@ -53,20 +44,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let event = {
             tokio::select! {
                 event = event_rx.recv() => {
-                    event.unwrap()
+                    Some(event.unwrap())
                 }
-                _ = tox.run() => { Event::None }
+                _ = tox.run() => { None }
             }
         };
 
         match event {
-            Event::IncomingFriendRequest(public_key) => {
-                tox.add_friend_norequest(&public_key).unwrap();
+            Some(Event::FriendRequest(request)) => {
+                tox.add_friend_norequest(&request.public_key).unwrap();
             }
-            Event::IncomingMessage(friend, message) => {
+            Some(Event::MessageReceived(friend, message)) => {
                 tox.send_message(&friend, &message).unwrap();
             }
-            Event::None => {}
+            _ => {}
         }
     }
 }

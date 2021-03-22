@@ -1,8 +1,4 @@
-use crate::{
-    error::*,
-    Friend, FriendRequest, Message, Receipt,
-    tox::{FriendMessageCallback, FriendRequestCallback, ReceiptCallback},
-};
+use crate::{Event, error::*, tox::ToxEventCallback};
 use crate::{
     sys::{ToxApi, ToxApiImpl, ToxOptionsApi, ToxOptionsSys},
     tox::{Tox, ToxImpl},
@@ -115,18 +111,8 @@ impl ToxBuilder {
         self
     }
 
-    pub fn friend_message_callback<F: FnMut(Friend, Message) + 'static>(mut self, callback: F) -> Self {
-        self.inner.friend_message_callback(Box::new(callback));
-        self
-    }
-
-    pub fn friend_request_callback<F: FnMut(FriendRequest) + 'static>(mut self, callback: F) -> Self {
-        self.inner.friend_request_callback(Box::new(callback));
-        self
-    }
-
-    pub fn receipt_callback<F: FnMut(Friend, Receipt) + 'static>(mut self, callback: F) -> Self {
-        self.inner.receipt_callback(Box::new(callback));
+    pub fn event_callback<F: FnMut(Event) + 'static>(mut self, callback: F) -> Self {
+        self.inner.event_callback(Box::new(callback));
         self
     }
 
@@ -142,9 +128,7 @@ impl ToxBuilder {
 struct ToxBuilderImpl<Api: ToxOptionsApi> {
     api: Api,
     options: *mut Tox_Options,
-    friend_message_callback: Option<FriendMessageCallback>,
-    friend_request_callback: Option<FriendRequestCallback>,
-    receipt_callback: Option<ReceiptCallback>,
+    event_callback: Option<ToxEventCallback>,
     log: bool,
 }
 
@@ -160,9 +144,7 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         Ok(ToxBuilderImpl {
             api,
             options,
-            friend_message_callback: None,
-            friend_request_callback: None,
-            receipt_callback: None,
+            event_callback: None,
             log: false,
         })
     }
@@ -218,16 +200,8 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         self.log = enable;
     }
 
-    pub fn friend_message_callback(&mut self, callback: FriendMessageCallback) {
-        self.friend_message_callback = Some(callback);
-    }
-
-    pub fn friend_request_callback(&mut self, callback: FriendRequestCallback) {
-        self.friend_request_callback = Some(callback);
-    }
-
-    pub fn receipt_callback(&mut self, callback: ReceiptCallback) {
-        self.receipt_callback = Some(callback);
+    pub fn event_callback(&mut self, callback: ToxEventCallback) {
+        self.event_callback = Some(callback);
     }
 
     fn map_err_new(err: TOX_ERR_NEW) -> ToxCreationError {
@@ -264,27 +238,13 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
             return Err(From::from(Self::map_err_new(err)));
         }
 
-        let mut friend_message_callback = None;
-        std::mem::swap(
-            &mut friend_message_callback,
-            &mut self.friend_message_callback,
-        );
-
-        let mut friend_request_callback = None;
-        std::mem::swap(
-            &mut friend_request_callback,
-            &mut self.friend_request_callback,
-        );
-
-        let mut receipt_callback = None;
-        std::mem::swap(&mut receipt_callback, &mut self.receipt_callback);
+        let mut event_callback = None;
+        std::mem::swap(&mut event_callback, &mut self.event_callback);
 
         let ret = ToxImpl::new(
             tox_api,
             sys_tox,
-            friend_message_callback,
-            friend_request_callback,
-            receipt_callback,
+            event_callback
         );
 
         Ok(ret)

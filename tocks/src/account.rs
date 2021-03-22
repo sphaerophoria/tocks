@@ -4,7 +4,7 @@ use crate::{
     Event, TocksEvent, APP_DIRS,
 };
 
-use toxcore::{FriendRequest, Message, PublicKey, Receipt, Tox, ToxId};
+use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
@@ -31,12 +31,6 @@ pub(crate) enum AccountEvent {
     None,
 }
 
-enum ToxCoreCallback {
-    MessageReceived(toxcore::Friend, Message),
-    FriendRequest(FriendRequest),
-    ReadReceipt(toxcore::Friend, Receipt),
-}
-
 pub(crate) struct Account {
     tox: Tox,
     user_manager: UserManager,
@@ -45,7 +39,7 @@ pub(crate) struct Account {
     public_key: PublicKey,
     tox_id: ToxId,
     name: String,
-    toxcore_callback_rx: mpsc::UnboundedReceiver<ToxCoreCallback>,
+    toxcore_callback_rx: mpsc::UnboundedReceiver<CoreEvent>,
 }
 
 impl Account {
@@ -81,24 +75,11 @@ impl Account {
     pub fn from_builder(builder: toxcore::ToxBuilder) -> Result<Account> {
         let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
 
-        let friend_request_callback_tx = toxcore_callback_tx.clone();
-        let receipt_callback_tx = toxcore_callback_tx.clone();
-
         let mut tox = builder
-            .friend_message_callback(move |friend, message| {
+            .event_callback(move |event| {
                 toxcore_callback_tx
-                    .send(ToxCoreCallback::MessageReceived(friend, message))
+                    .send(event)
                     .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
-            })
-            .friend_request_callback(move |request| {
-                friend_request_callback_tx
-                    .send(ToxCoreCallback::FriendRequest(request))
-                    .unwrap_or_else(|_| error!("Failed to propagate friend request"))
-            })
-            .receipt_callback(move |friend, receipt| {
-                receipt_callback_tx
-                    .send(ToxCoreCallback::ReadReceipt(friend, receipt))
-                    .unwrap_or_else(|_| error!("Failed to propagate receipt"))
             })
             .build()?;
 
@@ -255,16 +236,16 @@ impl Account {
             _ = self.tox.run() => { Ok(AccountEvent::None) }
             toxcore_callback = self.toxcore_callback_rx.recv() => {
                 match toxcore_callback {
-                    Some(ToxCoreCallback::MessageReceived(tox_friend, message)) => {
+                    Some(CoreEvent::MessageReceived(tox_friend, message)) => {
                         let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
                         let chat_log_entry = self.storage.push_message(friend.chat_handle(), *friend.id(), message)
                             .context("Failed to insert incoming message into storage")?;
                         Ok(AccountEvent::ChatMessageInserted(*friend.chat_handle(), chat_log_entry))
                     },
-                    Some(ToxCoreCallback::FriendRequest(request)) => {
+                    Some(CoreEvent::FriendRequest(request)) => {
                         Ok(AccountEvent::FriendRequest(request))
                     },
-                    Some(ToxCoreCallback::ReadReceipt(tox_friend, receipt)) => {
+                    Some(CoreEvent::ReadReceipt(tox_friend, receipt)) => {
                         let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
                         let updated_message_id = self.storage.resolve_receipt(friend.chat_handle(), &receipt)
                             .context("Failed to resolve receipt")?;
