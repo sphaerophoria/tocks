@@ -1,9 +1,9 @@
 use crate::{
     Event, builder::ToxBuilder, error::*, Friend, FriendData, FriendRequest, Message, PublicKey, Receipt,
-    SecretKey, ToxId,
+    SecretKey, ToxId, Status
 };
 
-use log::error;
+use log::{error, warn};
 
 use toxcore_sys::*;
 
@@ -187,6 +187,8 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 sys_tox,
                 Some(tox_friend_read_receipt_callback::<Api>),
             );
+            api.callback_friend_status(sys_tox, Some(tox_friend_status_callback::<Api>));
+            api.callback_friend_connection_status(sys_tox, Some(tox_friend_connection_status_callback::<Api>));
         }
 
         // FIXME: friends should be initialized here and only accessed later,
@@ -390,6 +392,20 @@ impl<Api: ToxApi> ToxImpl<Api> {
         }
     }
 
+    fn status_from_id(&self, id: u32) -> Result<Status, ToxFriendQueryError> {
+        let mut err = TOX_ERR_FRIEND_QUERY_OK;
+
+        let status = unsafe {
+            self.api.friend_get_status(self.sys_tox.get(), id, &mut err as *mut TOX_ERR_FRIEND_QUERY)
+        };
+
+        if err != TOX_ERR_FRIEND_QUERY_OK {
+            return Err(ToxFriendQueryError::from(err))
+        }
+
+        convert_status(status)
+    }
+
     /// Creates a [`Friend`], populating the data in [`ToxData::friend_data`] if necessary.
     ///
     /// If [`ToxData::friend_data`] already exists the data in it will be overwritten
@@ -404,8 +420,9 @@ impl<Api: ToxApi> ToxImpl<Api> {
         } else {
             let public_key = self.public_key_from_id(id)?;
             let name = self.name_from_id(id)?;
+            let status = self.status_from_id(id)?;
 
-            let friend_data = FriendData { public_key, name };
+            let friend_data = FriendData { public_key, name, status };
 
             let friend_data = Arc::new(RwLock::new(friend_data));
             self.data.friend_data.insert(id, Arc::clone(&friend_data));
@@ -540,6 +557,89 @@ unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
     }
 }
 
+unsafe extern "C" fn tox_friend_status_callback<Api: ToxApi>(
+    _tox: *mut toxcore_sys::Tox,
+    friend_number: u32,
+    status: TOX_USER_STATUS,
+    user_data: *mut std::os::raw::c_void
+) {
+
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
+
+    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return;
+        }
+    };
+
+    let converted_status = convert_status(status);
+
+    if let Err(_) = converted_status {
+        warn!("Invalid incoming status: {}", status);
+        return;
+    }
+
+    let converted_status = converted_status.unwrap();
+
+    friend_data.write().unwrap().status = converted_status;
+
+    let f = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::StatusUpdated(f));
+    }
+}
+
+unsafe extern "C" fn tox_friend_connection_status_callback<Api: ToxApi>(
+    _tox: *mut toxcore_sys::Tox,
+    friend_number: u32,
+    connection: TOX_CONNECTION,
+    user_data: *mut std::os::raw::c_void
+) {
+
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
+
+    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return;
+        }
+    };
+
+    // We only care about the offline callback, We determine a friend has gone "online" via the friend status callback
+    if connection != TOX_CONNECTION_NONE {
+        return;
+    }
+
+    friend_data.write().unwrap().status = Status::Offline;
+
+    let f = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::StatusUpdated(f));
+    }
+}
+
+fn convert_status(status: TOX_USER_STATUS) -> Result<Status, ToxFriendQueryError> {
+    let status = match status {
+        TOX_USER_STATUS_NONE => Status::Online,
+        TOX_USER_STATUS_AWAY => Status::Away,
+        TOX_USER_STATUS_BUSY => Status::Busy,
+        _ => return Err(ToxFriendQueryError::Unknown),
+    };
+
+    Ok(status)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -612,6 +712,26 @@ pub(crate) mod tests {
                     true
                 });
 
+            mock.expect_friend_get_status()
+                .withf_st(move |_, id, _err| *id == default_peer_id)
+                .returning_st(move |_, _id, _err| {
+                    TOX_USER_STATUS_NONE
+                });
+
+            mock.expect_friend_get_connection_status()
+                .withf_st(move |_, id, _err| *id == default_peer_id)
+                .returning_st(move |_, _id, _err| {
+                    TOX_CONNECTION_UDP
+                });
+
+            mock.expect_callback_friend_status()
+                .return_const(())
+                .times(1);
+
+            mock.expect_callback_friend_connection_status()
+                .return_const(())
+                .times(1);
+
             let tox = ToxImpl::new(mock, std::ptr::null_mut(), None);
 
             ToxFixture {
@@ -668,14 +788,13 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_friend_request_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    #[test]
+    fn test_friend_request_dispatch() -> Result<(), Box<dyn std::error::Error>> {
         let mock = MockSysToxApi::default();
+        let mut fixture = ToxFixture::new(mock);
 
         let message_str = "message";
         let message = message_str.to_string().into_bytes();
-
-        let mut fixture = ToxFixture::new(mock);
 
         let default_peer_pk = fixture.default_peer_pk.clone();
 
@@ -707,6 +826,65 @@ pub(crate) mod tests {
                 message.as_ptr(),
                 message.len() as u64,
                 (&mut callback_data as *mut CallbackData<MockSysToxApi>)
+                    as *mut std::os::raw::c_void,
+            );
+        }
+
+        assert!(callback_called.load(Ordering::Relaxed));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_friend_status_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+        // Initialize our default friend
+        let mock = MockSysToxApi::default();
+        let mut fixture = ToxFixture::new(mock);
+
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_called_clone = Arc::clone(&callback_called);
+
+        use std::sync::atomic::Ordering;
+        // Hack in the friend request callback instead of making a fixture builder
+        fixture.tox.data.event_callback = Some(Box::new(move |event| {
+            callback_called_clone.store(true, Ordering::Relaxed);
+            match event {
+                Event::StatusUpdated(friend) => {
+                    assert_eq!(friend.status(), Status::Busy);
+                }
+                _ => assert!(false),
+            }
+        }));
+
+        // Initialize our default friend
+        // FIXME we need a better test infra for testing this
+        let peer_pk = fixture.default_peer_pk.clone();
+        let pk_len = peer_pk.key.len();
+        fixture
+            .tox
+            .api
+            .expect_friend_add_norequest()
+            .withf_st(move |_, input_public_key, _err| {
+                let slice = unsafe { std::slice::from_raw_parts(*input_public_key, pk_len) };
+                slice == peer_pk.key
+            })
+            .return_const(fixture.default_peer_id)
+            .once();
+
+        fixture.tox.add_friend_norequest(&fixture.default_peer_pk);
+
+        let mut callback_data = CallbackData {
+            api: &fixture.tox.api,
+            data: &mut fixture.tox.data,
+        };
+
+        unsafe {
+            tox_friend_status_callback::<MockSysToxApi>(
+                std::ptr::null_mut(),
+                fixture.default_peer_id,
+                TOX_USER_STATUS_BUSY,
+                (&mut callback_data as *mut CallbackData<MockSysToxApi>)
+
                     as *mut std::os::raw::c_void,
             );
         }
@@ -776,23 +954,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn friend_retrieval() {
+    fn test_friend_retrieval() {
         let mut mock = MockSysToxApi::default();
+
+        const NUM_FRIENDS: usize = 4;
 
         // Set up fake friends list with 3 items
         mock.expect_self_get_friend_list_size()
-            .return_const(3 as u32);
+            .return_const(NUM_FRIENDS as u32);
         mock.expect_self_get_friend_list()
             .returning_st(|_, output_list| unsafe {
                 *output_list = 1;
                 *output_list.offset(1) = 2;
                 *output_list.offset(2) = 3;
+                *output_list.offset(3) = 4;
             });
+
+        fn is_in_friend_list(id: &u32) -> bool { *id == 1u32 || *id == 2u32 || *id == 3u32 || *id == 4u32 };
 
         // mocked friend PKs will only be 3 long, "pk1", "pk2", "pk3"
         mock.expect_public_key_size().return_const(3 as u32);
         mock.expect_friend_get_public_key()
-            .withf_st(|_, id, _output, _error| *id == 1u32 || *id == 2u32 || *id == 3u32)
+            .withf_st(|_, id, _output, _error| is_in_friend_list(id))
             .returning_st(|_, id, output, _error| {
                 unsafe {
                     let key = format!("pk{}", id);
@@ -800,11 +983,11 @@ pub(crate) mod tests {
                 }
                 true
             })
-            .times(3);
+            .times(NUM_FRIENDS);
 
         mock.expect_friend_get_name_size().return_const(5 as u32);
         mock.expect_friend_get_name()
-            .withf_st(|_, id, _output, _error| *id == 1u32 || *id == 2u32 || *id == 3u32)
+            .withf_st(|_, id, _output, _error| is_in_friend_list(id))
             .returning_st(|_, id, output, _error| {
                 unsafe {
                     let name = format!("name{}", id);
@@ -812,7 +995,29 @@ pub(crate) mod tests {
                 }
                 true
             })
-            .times(3);
+            .times(NUM_FRIENDS);
+
+        mock.expect_friend_get_status()
+            .withf_st(|_, id, _error| is_in_friend_list(id))
+            .returning_st(|_, id, _error| {
+                match id {
+                    2u32 => TOX_USER_STATUS_AWAY,
+                    3u32 => TOX_USER_STATUS_BUSY,
+                    _ => TOX_USER_STATUS_NONE,
+                }
+            })
+            .times(NUM_FRIENDS - 1); // Offline friend will not call this
+
+        mock.expect_friend_get_connection_status()
+            .withf_st(|_, id, _error| is_in_friend_list(id))
+            .returning_st(|_, id, _error| {
+                if id == 4u32 {
+                    TOX_CONNECTION_NONE
+                } else {
+                    TOX_CONNECTION_UDP
+                }
+            })
+            .times(NUM_FRIENDS);
 
         let mut fixture = ToxFixture::new(mock);
 
@@ -823,19 +1028,27 @@ pub(crate) mod tests {
                 && friend.public_key().key == format!("pk{}", id).into_bytes()
         };
 
-        assert_eq!(friends.len(), 3);
-        assert!(friends
-            .iter()
-            .find(|item| friend_matches_id(item, 1))
-            .is_some());
-        assert!(friends
-            .iter()
-            .find(|item| friend_matches_id(item, 2))
-            .is_some());
-        assert!(friends
-            .iter()
-            .find(|item| friend_matches_id(item, 3))
-            .is_some());
+        assert_eq!(friends.len(), NUM_FRIENDS);
+
+        let friend1 = friends.iter().find(|item| friend_matches_id(item, 1)).unwrap();
+        assert_eq!(friend1.public_key().as_bytes(), "pk1".as_bytes());
+        assert_eq!(friend1.name(),  "name1");
+        assert_eq!(friend1.status(), Status::Online);
+
+        let friend2 = friends.iter().find(|item| friend_matches_id(item, 2)).unwrap();
+        assert_eq!(friend2.public_key().as_bytes(), "pk2".as_bytes());
+        assert_eq!(friend2.name(),  "name2");
+        assert_eq!(friend2.status(), Status::Away);
+
+        let friend3 = friends.iter().find(|item| friend_matches_id(item, 3)).unwrap();
+        assert_eq!(friend3.public_key().as_bytes(), "pk3".as_bytes());
+        assert_eq!(friend3.name(),  "name3");
+        assert_eq!(friend3.status(), Status::Busy);
+
+        let friend4 = friends.iter().find(|item| friend_matches_id(item, 4)).unwrap();
+        assert_eq!(friend4.public_key().as_bytes(), "pk4".as_bytes());
+        assert_eq!(friend4.name(),  "name4");
+        assert_eq!(friend4.status(), Status::Offline);
     }
 
     #[test]

@@ -321,10 +321,10 @@ mod tests {
         let mut mock = MockToxApi::default();
 
         mock.expect_callback_friend_request().return_const(());
-
         mock.expect_callback_friend_message().return_const(());
-
         mock.expect_callback_friend_read_receipt().return_const(());
+        mock.expect_callback_friend_status().return_const(());
+        mock.expect_callback_friend_connection_status().return_const(());
 
         mock.expect_kill().return_const(());
         mock.expect_new().returning_st(|_, _| std::ptr::null_mut());

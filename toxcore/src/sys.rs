@@ -60,6 +60,12 @@ pub trait ToxApi: Send + Sync {
         length: size_t,
         error: *mut TOX_ERR_FRIEND_SEND_MESSAGE,
     ) -> u32;
+    unsafe fn friend_get_status(
+        &self,
+        tox: *const toxcore_sys::Tox,
+        friend_number: u32,
+        error: *mut TOX_ERR_FRIEND_QUERY
+    ) -> TOX_USER_STATUS;
     unsafe fn callback_friend_request(
         &self,
         tox: *mut toxcore_sys::Tox,
@@ -75,6 +81,14 @@ pub trait ToxApi: Send + Sync {
         tox: *mut toxcore_sys::Tox,
         callback: tox_friend_read_receipt_cb,
     );
+    unsafe fn callback_friend_status(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_status_cb);
+    unsafe fn callback_friend_connection_status(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_connection_status_cb);
 }
 
 pub(crate) struct ToxApiImpl;
@@ -188,6 +202,15 @@ impl ToxApi for ToxApiImpl {
         tox_friend_send_message(tox, friend_number, type_, message, length, error)
     }
 
+    unsafe fn friend_get_status(
+        &self,
+        tox: *const toxcore_sys::Tox,
+        friend_number: u32,
+        error: *mut TOX_ERR_FRIEND_QUERY
+    ) -> TOX_USER_STATUS {
+        tox_friend_get_status(tox, friend_number, error)
+    }
+
     unsafe fn callback_friend_request(
         &self,
         tox: *mut toxcore_sys::Tox,
@@ -211,6 +234,23 @@ impl ToxApi for ToxApiImpl {
     ) {
         tox_callback_friend_read_receipt(tox, callback)
     }
+
+    unsafe fn callback_friend_status(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_status_cb
+    ) {
+        tox_callback_friend_status(tox, callback)
+    }
+
+    unsafe fn callback_friend_connection_status(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_connection_status_cb
+    ) {
+        tox_callback_friend_connection_status(tox, callback)
+    }
+
 }
 
 #[automock]

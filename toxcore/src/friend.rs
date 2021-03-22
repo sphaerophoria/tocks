@@ -1,4 +1,4 @@
-use crate::{FriendData, PublicKey};
+use crate::{FriendData, PublicKey, Status};
 
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
@@ -18,6 +18,10 @@ impl Friend {
     /// Retrieves the friend's advertised name
     pub fn name(&self) -> String {
         self.lock_data().name.clone()
+    }
+
+    pub fn status(&self) -> Status {
+        self.lock_data().status
     }
 
     fn lock_data(&self) -> RwLockReadGuard<'_, FriendData> {

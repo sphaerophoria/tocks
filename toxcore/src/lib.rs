@@ -112,9 +112,10 @@ pub struct FriendRequest {
 /// have functions to respond to updates. This is designed to allow for
 /// name change notifications, etc. to be processed in [`Tox::run`]
 #[derive(Debug)]
-struct FriendData {
-    public_key: PublicKey,
-    name: String,
+pub(crate) struct FriendData {
+    pub(crate) public_key: PublicKey,
+    pub(crate) name: String,
+    pub(crate) status: Status,
 }
 
 #[derive(Debug, Clone)]
@@ -123,8 +124,17 @@ pub enum Message {
     Action(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Online,
+    Away,
+    Busy,
+    Offline,
+}
+
 pub enum Event {
     MessageReceived(Friend, Message),
     FriendRequest(FriendRequest),
     ReadReceipt(Friend, Receipt),
+    StatusUpdated(Friend),
 }
