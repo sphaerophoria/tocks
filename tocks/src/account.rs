@@ -215,26 +215,24 @@ impl Account {
     ) -> Result<ChatLogEntry> {
         let message = Message::Normal(message);
 
-        // Send message to the DB before we send it to toxcore. On the one hand
-        // it kind of sucks to do this synchronously, and also sucks that if you
-        // fail to persist the message that it doesn't get sent to your peer.
-        //
-        // That being said, I think it sucks more if your data doesn't end up in
-        // history. I'd rather prioritize that the data integrity is preserved
-        // than get the message out a little faster. If this starts to become a
-        // problem we can try improving the performance of sqlite, or re-evaluate
-        // this decision. Since we are using the storage backed ID
-        let mut chat_log_entry = self
-            .storage
-            .push_message(chat_handle, self.user_handle, message)
-            .context("Failed to insert message into storage")?;
-
         let tox_friend = self.user_manager.tox_friend_by_chat_handle(&chat_handle);
 
         let receipt = self
             .tox
-            .send_message(&tox_friend, &chat_log_entry.message())
+            .send_message(&tox_friend, &message)
             .context("Failed to send message to tox friend")?;
+
+        // Until we have support for offline messaging we need to insert the
+        // message into the DB after it has been sent. This ensures that we
+        // don't end up with a bunch of messages in our history without having
+        // sent them.
+        //
+        // FIXME: If receipt handling fails we will not show the message in our
+        // chatlog
+        let mut chat_log_entry = self
+            .storage
+            .push_message(chat_handle, self.user_handle, message)
+            .context("Failed to insert message into storage")?;
 
         self.storage
             .add_unresolved_receipt(chat_log_entry.id(), &receipt)
