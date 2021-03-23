@@ -1,3 +1,5 @@
+use crate::status_to_qstring;
+
 use qmetaobject::*;
 use tocks::Friend as TocksFriend;
 
@@ -8,6 +10,7 @@ pub struct Friend {
     userId: qt_property!(i64),
     publicKey: qt_property!(QString),
     name: qt_property!(QString),
+    status: qt_property!(QString),
 }
 
 impl From<&TocksFriend> for Friend {
@@ -17,6 +20,7 @@ impl From<&TocksFriend> for Friend {
             userId: friend.id().id(),
             publicKey: friend.public_key().to_string().into(),
             name: friend.name().to_string().into(),
+            status: status_to_qstring(friend.status())
         }
     }
 }

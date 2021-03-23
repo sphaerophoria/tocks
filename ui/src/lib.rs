@@ -8,7 +8,7 @@ use tocks::{
     AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle,
 };
 
-use toxcore::{Message, PublicKey, ToxId};
+use toxcore::{Message, PublicKey, ToxId, Status};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -168,6 +168,7 @@ struct QTocks {
     accountActivated: qt_signal!(account: Account),
     friendAdded: qt_signal!(account: i64, friend: Friend),
     friendRequestReceived: qt_signal!(account: i64, request: FriendRequest),
+    friendStatusChanged: qt_signal!(accountId: i64, friendId: i64, status: QString),
     error: qt_signal!(error: QString),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
@@ -192,6 +193,7 @@ impl QTocks {
             accountActivated: Default::default(),
             friendAdded: Default::default(),
             friendRequestReceived: Default::default(),
+            friendStatusChanged: Default::default(),
             error: Default::default(),
             ui_requests_tx,
             tocks_event_rx,
@@ -318,6 +320,9 @@ impl QTocks {
                     chat_model_ref.resolve_message(id);
                 }
             }
+            TocksEvent::FriendStatusChanged(account_id, user_id, status) => {
+                self.friendStatusChanged(account_id.id(), user_id.id(), status_to_qstring(&status));
+            }
         }
     }
 
@@ -411,3 +416,13 @@ impl Drop for QmlUi {
         }
     }
 }
+
+pub(crate) fn status_to_qstring(status: &Status) -> QString {
+    match status {
+        Status::Online => "online".into(),
+        Status::Away => "away".into(),
+        Status::Busy => "busy".into(),
+        Status::Offline => "offline".into(),
+    }
+}
+
