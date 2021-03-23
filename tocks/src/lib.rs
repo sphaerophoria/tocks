@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 
 use crate::account::{Account, AccountManager};
 
-use toxcore::{FriendRequest, PublicKey, ToxId};
+use toxcore::{FriendRequest, PublicKey, ToxId, Status};
 
 use lazy_static::lazy_static;
 use log::*;
@@ -47,6 +47,7 @@ pub enum TocksEvent {
     MessagesLoaded(AccountId, ChatHandle, Vec<ChatLogEntry>),
     MessageInserted(AccountId, ChatHandle, ChatLogEntry),
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
+    FriendStatusChanged(AccountId, UserHandle, Status),
 }
 
 // Things that Tocks can handle in it's core iteration loop

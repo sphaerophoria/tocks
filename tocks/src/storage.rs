@@ -1,6 +1,6 @@
 use crate::contact::Friend;
 
-use toxcore::{Message, PublicKey, Receipt};
+use toxcore::{Message, PublicKey, Receipt, Status};
 
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
@@ -152,6 +152,7 @@ impl Storage {
                     chat_handle,
                     PublicKey::from_bytes(public_key_bytes)?,
                     name,
+                    Status::Offline,
                 ))
             })
             .collect::<Result<Vec<Friend>>>()
@@ -185,6 +186,7 @@ impl Storage {
             ChatHandle { chat_id },
             public_key,
             name,
+            Status::Offline,
         ))
     }
 

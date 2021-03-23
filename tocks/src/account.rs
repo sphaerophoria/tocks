@@ -4,7 +4,7 @@ use crate::{
     Event, TocksEvent, APP_DIRS,
 };
 
-use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Tox, ToxId};
+use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Tox, ToxId, Status};
 
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
@@ -28,6 +28,7 @@ pub(crate) enum AccountEvent {
     FriendRequest(FriendRequest),
     ChatMessageInserted(ChatHandle, ChatLogEntry),
     ChatMessageCompleted(ChatHandle, ChatMessageId),
+    FriendStatusChanged(UserHandle, Status),
     None,
 }
 
@@ -252,6 +253,11 @@ impl Account {
 
                         Ok(AccountEvent::ChatMessageCompleted(*friend.chat_handle(), updated_message_id))
                     },
+                    Some(CoreEvent::StatusUpdated(tox_friend)) => {
+                        let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
+                        friend.set_status(tox_friend.status());
+                        Ok(AccountEvent::FriendStatusChanged(*friend.id(), *friend.status()))
+                    }
                     None => Ok(AccountEvent::None),
                 }
             }
@@ -334,6 +340,9 @@ impl AccountManager {
             }
             (id, Ok(AccountEvent::ChatMessageCompleted(chat_handle, msg_id))) => {
                 TocksEvent::MessageCompleted(id, chat_handle, msg_id).into()
+            }
+            (id, Ok(AccountEvent::FriendStatusChanged(user_handle, status))) => {
+                TocksEvent::FriendStatusChanged(id, user_handle, status).into()
             }
             (_, Ok(AccountEvent::None)) => Event::None,
             (id, Err(e)) => {
