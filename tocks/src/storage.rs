@@ -9,7 +9,7 @@ use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transacti
 use std::{fmt, path::Path};
 
 // Wrapper around sqlite message table id
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct ChatMessageId {
     msg_id: i64,
 }
@@ -87,6 +87,21 @@ impl fmt::Display for UserHandle {
 impl UserHandle {
     pub fn id(&self) -> i64 {
         self.user_id
+    }
+}
+
+pub struct UnsentMessage {
+    id: ChatMessageId,
+    message: Message
+}
+
+impl UnsentMessage {
+    pub fn id(&self) -> &ChatMessageId {
+        &self.id
+    }
+
+    pub fn message(&self) -> &Message {
+        &self.message
     }
 }
 
@@ -335,42 +350,60 @@ impl Storage {
             .context("Failed to convert messages from DB")?)
     }
 
-    pub fn add_unresolved_receipt(
+    pub fn add_unresolved_message(
         &mut self,
-        message_id: &ChatMessageId,
-        receipt: &Receipt,
+        message_id: &ChatMessageId
     ) -> Result<()> {
         self.connection
             .execute(
-                "INSERT OR REPLACE INTO pending_messages (message_id, receipt_id) VALUES (?1, ?2)",
-                params![message_id.msg_id, receipt.id()],
+                "INSERT OR REPLACE INTO pending_messages (message_id) VALUES (?1)",
+                params![message_id.msg_id],
             )
             .context("Failed to insert receipt into DB")?;
         Ok(())
     }
 
-    pub fn resolve_receipt(
+    pub fn resolve_message(
         &mut self,
         chat_handle: &ChatHandle,
-        receipt: &Receipt,
-    ) -> Result<ChatMessageId> {
-        let msg_id = self
-            .connection
-            .query_row(
-                "SELECT message_id FROM pending_messages LEFT JOIN messages ON pending_messages.receipt_id = messages.id WHERE receipt_id = ?1 AND messages.chat_id = ?2",
-                params![receipt.id(), chat_handle.id()],
-                |row| row.get(0),
-            )
-            .context("Failed to retrieve receipt from DB")?;
-
+        message_id: &ChatMessageId
+    ) -> Result<()> {
         self.connection
             .execute(
-                "DELETE FROM pending_messages WHERE receipt_id = ?1",
-                params![receipt.id()],
+                "DELETE FROM pending_messages WHERE message_id = ?1",
+                params![message_id.msg_id],
             )
             .context("Failed to remove receipt from DB")?;
 
-        Ok(ChatMessageId { msg_id })
+        Ok(())
+    }
+
+    pub fn unresovled_messages(
+        &mut self,
+        chat_handle: &ChatHandle
+    ) -> Result<Vec<UnsentMessage>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, text_messages.message, text_messages.action FROM messages JOIN pending_messages ON pending_messages.message_id = messages.id JOIN text_messages ON messages.id = text_messages.message_id WHERE messages.chat_id = ?1")
+            .context("Failed to prepare unresolved message query")?;
+
+        let res = statement.query_map(params![chat_handle.chat_id], |row| {
+            let id: i64 = row.get(0)?;
+            let message_str = row.get(1)?;
+            let action = row.get(2)?;
+
+            let message = match action {
+                true => Message::Action(message_str),
+                false => Message::Normal(message_str),
+            };
+
+            Ok(UnsentMessage { id: ChatMessageId {msg_id: id}, message })
+        })
+        .context("Failed to query unresolved messages")?
+        .into_iter()
+        .map(|item| item.map_err(Error::from))
+        .collect::<Result<Vec<_>>>();
+
+        res
     }
 }
 
@@ -456,16 +489,6 @@ fn initialize_db(connection: &mut Connection) -> Result<()> {
     transaction
         .commit()
         .context("Failed to commit db initialization")?;
-
-    clear_receipt_ids(connection).context("Failed to clear receipt IDs on initialization")?;
-
-    Ok(())
-}
-
-pub fn clear_receipt_ids(connection: &mut Connection) -> Result<()> {
-    connection
-        .execute("UPDATE pending_messages SET receipt_id = NULL", NO_PARAMS)
-        .context("Failed to clear receipt IDs")?;
 
     Ok(())
 }

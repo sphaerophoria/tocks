@@ -36,6 +36,7 @@ pub(crate) struct Account {
     tox: Tox,
     user_manager: UserManager,
     storage: Storage,
+    outgoing_messages: HashMap<Receipt, (ChatHandle, ChatMessageId)>,
     user_handle: UserHandle,
     public_key: PublicKey,
     tox_id: ToxId,
@@ -144,6 +145,7 @@ impl Account {
             user_manager,
             toxcore_callback_rx,
             storage,
+            outgoing_messages: HashMap::new(),
             user_handle: self_user_handle,
             public_key: self_public_key,
             tox_id,
@@ -199,28 +201,26 @@ impl Account {
 
         let tox_friend = self.user_manager.tox_friend_by_chat_handle(&chat_handle);
 
-        let receipt = self
-            .tox
-            .send_message(&tox_friend, &message)
-            .context("Failed to send message to tox friend")?;
-
-        // Until we have support for offline messaging we need to insert the
-        // message into the DB after it has been sent. This ensures that we
-        // don't end up with a bunch of messages in our history without having
-        // sent them.
-        //
-        // FIXME: If receipt handling fails we will not show the message in our
-        // chatlog
         let mut chat_log_entry = self
             .storage
             .push_message(chat_handle, self.user_handle, message)
             .context("Failed to insert message into storage")?;
 
-        self.storage
-            .add_unresolved_receipt(chat_log_entry.id(), &receipt)
-            .context("Failed to insert receipt into storage")?;
-
         chat_log_entry.set_complete(false);
+
+        self.storage
+            .add_unresolved_message(chat_log_entry.id())
+            .context("Failed to flag message as un-delivered in storage")?;
+
+        if tox_friend.status() != Status::Offline {
+            let receipt = self
+                .tox
+                .send_message(&tox_friend, chat_log_entry.message())
+                .context("Failed to send message to tox friend")?;
+
+            self.outgoing_messages.insert(receipt, (*chat_handle, *chat_log_entry.id()));
+        }
+
 
         Ok(chat_log_entry)
     }
@@ -246,15 +246,32 @@ impl Account {
                     Some(CoreEvent::FriendRequest(request)) => {
                         Ok(AccountEvent::FriendRequest(request))
                     },
-                    Some(CoreEvent::ReadReceipt(tox_friend, receipt)) => {
-                        let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
-                        let updated_message_id = self.storage.resolve_receipt(friend.chat_handle(), &receipt)
-                            .context("Failed to resolve receipt")?;
+                    Some(CoreEvent::ReadReceipt(receipt)) => {
+                        if let Some((handle, message_id)) = self.outgoing_messages.remove(&receipt) {
+                            self.storage.resolve_message(&handle, &message_id)
+                                .context("Failed to resolve message")?;
 
-                        Ok(AccountEvent::ChatMessageCompleted(*friend.chat_handle(), updated_message_id))
+                            Ok(AccountEvent::ChatMessageCompleted(handle, message_id))
+                        } else {
+                            error!("Received receipt to unknown message");
+                            Ok(AccountEvent::None)
+                        }
+
                     },
                     Some(CoreEvent::StatusUpdated(tox_friend)) => {
                         let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
+
+                        if *friend.status() == Status::Offline && tox_friend.status() != Status::Offline {
+                            let messages = self.storage.unresovled_messages(friend.chat_handle())
+                                .context("Failed to retrieve unsent messages")?;
+
+                            for message in messages {
+                                let receipt = self.tox.send_message(&tox_friend, message.message())
+                                    .context("Failed to send unsent message")?;
+                                self.outgoing_messages.insert(receipt, (*friend.chat_handle(), *message.id()));
+                            }
+                        }
+
                         friend.set_status(tox_friend.status());
                         Ok(AccountEvent::FriendStatusChanged(*friend.id(), *friend.status()))
                     }
@@ -346,7 +363,7 @@ impl AccountManager {
             }
             (_, Ok(AccountEvent::None)) => Event::None,
             (id, Err(e)) => {
-                error!("Error in account {:?} handler: {}", id, e);
+                error!("Error in account {:?} handler: {:?}", id, e);
                 Event::None
             }
         }

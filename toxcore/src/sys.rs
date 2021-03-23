@@ -66,6 +66,12 @@ pub trait ToxApi: Send + Sync {
         friend_number: u32,
         error: *mut TOX_ERR_FRIEND_QUERY
     ) -> TOX_USER_STATUS;
+    unsafe fn friend_get_connection_status(
+        &self,
+        tox: *const toxcore_sys::Tox,
+        friend_number: u32,
+        error: *mut TOX_ERR_FRIEND_QUERY
+    ) -> TOX_CONNECTION;
     unsafe fn callback_friend_request(
         &self,
         tox: *mut toxcore_sys::Tox,
@@ -209,6 +215,15 @@ impl ToxApi for ToxApiImpl {
         error: *mut TOX_ERR_FRIEND_QUERY
     ) -> TOX_USER_STATUS {
         tox_friend_get_status(tox, friend_number, error)
+    }
+
+    unsafe fn friend_get_connection_status(
+        &self,
+        tox: *const toxcore_sys::Tox,
+        friend_number: u32,
+        error: *mut TOX_ERR_FRIEND_QUERY
+    ) -> TOX_CONNECTION {
+        tox_friend_get_connection_status(tox, friend_number, error)
     }
 
     unsafe fn callback_friend_request(

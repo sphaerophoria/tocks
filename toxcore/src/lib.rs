@@ -88,13 +88,19 @@ impl_key_type!(SecretKey, Vec<u8>, TOX_SECRET_KEY_SIZE);
 impl_key_type!(ToxId, Vec<u8>, TOX_PUBLIC_KEY_SIZE + 4 + 2);
 
 /// Receipt for sent message
+#[derive(Hash, PartialEq, Eq)]
 pub struct Receipt {
     id: u32,
+    friend: Friend,
 }
 
 impl Receipt {
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    pub fn friend(&self) -> &Friend {
+        &self.friend
     }
 }
 
@@ -135,6 +141,6 @@ pub enum Status {
 pub enum Event {
     MessageReceived(Friend, Message),
     FriendRequest(FriendRequest),
-    ReadReceipt(Friend, Receipt),
+    ReadReceipt(Receipt),
     StatusUpdated(Friend),
 }

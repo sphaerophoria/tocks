@@ -32,7 +32,7 @@ ListView {
         anchors.leftMargin: bubbleHorizPadding
         anchors.rightMargin: bubbleHorizPadding
 
-        color: sentByMe ? Colors.selfColor : Colors.friendColor
+        color: (sentByMe && model.complete) ? Colors.selfColor : Colors.friendColor
 
         height: messageText.height + bubbleTextVertPadding
         width: messageText.paintedWidth + bubbleTextHorizPadding

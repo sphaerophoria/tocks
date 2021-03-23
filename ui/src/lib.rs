@@ -39,6 +39,7 @@ struct ChatModel {
 impl ChatModel {
     const MESSAGE_ROLE: i32 = USER_ROLE;
     const SENDER_ID_ROLE: i32 = USER_ROLE + 1;
+    const COMPLETE_ROLE: i32 = USER_ROLE + 2;
 
     fn set_content(&mut self, account_id: AccountId, chat: ChatHandle, content: Vec<ChatLogEntry>) {
         self.account = account_id.id();
@@ -77,7 +78,8 @@ impl ChatModel {
 
         self.chat_log[idx].set_complete(true);
 
-        let qidx = (self as &dyn QAbstractItemModel).create_index(idx as i32, 0, 0);
+
+        let qidx = (self as &dyn QAbstractItemModel).create_index(self.reversed_index(idx as i32) as i32, 0, 0);
         (self as &dyn QAbstractItemModel).data_changed(qidx, qidx);
     }
 
@@ -126,6 +128,9 @@ impl QAbstractItemModel for ChatModel {
             },
             Self::SENDER_ID_ROLE => {
                 entry.sender().id().to_qvariant()
+            },
+            Self::COMPLETE_ROLE => {
+                entry.complete().to_qvariant()
             }
             _ => QVariant::default()
         }
@@ -136,6 +141,7 @@ impl QAbstractItemModel for ChatModel {
 
         ret.insert(Self::MESSAGE_ROLE, "message".into());
         ret.insert(Self::SENDER_ID_ROLE, "senderId".into());
+        ret.insert(Self::COMPLETE_ROLE, "complete".into());
 
         ret
     }

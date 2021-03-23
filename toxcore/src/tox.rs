@@ -327,7 +327,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
             return Err(ToxSendMessageError::from(err));
         }
 
-        Ok(Receipt { id: receipt_id })
+        Ok(Receipt { id: receipt_id, friend: friend.clone() })
     }
 
     /// Calls into toxcore to get the public key for the provided friend id
@@ -394,6 +394,18 @@ impl<Api: ToxApi> ToxImpl<Api> {
 
     fn status_from_id(&self, id: u32) -> Result<Status, ToxFriendQueryError> {
         let mut err = TOX_ERR_FRIEND_QUERY_OK;
+
+        let connection_status = unsafe {
+            self.api.friend_get_connection_status(self.sys_tox.get(), id, &mut err as *mut TOX_ERR_FRIEND_QUERY)
+        };
+
+        if connection_status == TOX_CONNECTION_NONE {
+            return Ok(Status::Offline);
+        }
+
+        if err != TOX_ERR_FRIEND_QUERY_OK {
+            return Err(ToxFriendQueryError::from(err))
+        }
 
         let status = unsafe {
             self.api.friend_get_status(self.sys_tox.get(), id, &mut err as *mut TOX_ERR_FRIEND_QUERY)
@@ -553,7 +565,7 @@ unsafe extern "C" fn tox_friend_read_receipt_callback<Api: ToxApi>(
     };
 
     if let Some(callback) = &mut tox_data.data.event_callback {
-        (*callback)(Event::ReadReceipt(f, Receipt { id: message_id }));
+        (*callback)(Event::ReadReceipt(Receipt { id: message_id, friend: f }));
     }
 }
 
