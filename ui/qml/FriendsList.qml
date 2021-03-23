@@ -8,7 +8,7 @@ Rectangle {
 
     property var account
 
-    signal chatSelected(int chat_id);
+    signal friendSelected(var friend);
 
     color: Colors.sidebarColor
 
@@ -17,31 +17,17 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        Connections {
-            target: tocks
-
-            function onFriendAdded(accountId, friend) {
-                if (root.account.id !== account.id) {
-                    return
-                }
-
-                friendModel.append(friend)
-            }
-        }
-
-
         ListView {
 
             Layout.fillHeight: true
 
             id: friendList
+
             onCurrentItemChanged: {
-                root.chatSelected(friendModel.get(currentIndex).chatId)
+                root.friendSelected(account.friends[currentIndex])
             }
 
-            model: ListModel {
-                id: friendModel
-            }
+            model: account.friends
 
             delegate: Rectangle {
                 width: root.width
@@ -49,14 +35,27 @@ Rectangle {
 
                 color: friendList.currentIndex == index ? Colors.sidebarHighlight : "transparent"
 
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 10
-                    anchors.verticalCenter: parent.verticalCenter
+                RowLayout {
+                    anchors.fill: parent
+                    width: root.width
 
-                    text: model.name
-                    color: Colors.sidebarText
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 10
+                        Layout.alignment: Qt.AlignVCenter
+                        text: modelData.name
+                        color: Colors.sidebarText
+                    }
+
+                    StatusIcon {
+                        Layout.fillHeight: true
+                        Layout.margins: 10
+                        Layout.preferredWidth: height
+
+                        status: modelData.status
+                    }
                 }
+
 
                 MouseArea {
                     anchors.fill: parent

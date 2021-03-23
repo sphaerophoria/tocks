@@ -4,7 +4,7 @@ import QtQml 2.15
 import QtQuick.Layouts 1.11
 
 Rectangle {
-    required property int chatId
+    required property var friend
 
     color: "white"
 
@@ -14,7 +14,7 @@ Rectangle {
 
         Text {
             anchors.verticalCenter: parent.verticalCenter
-            text: chatCache[0][chatId]["name"]
+            text: friend.name
             font.bold: true
         }
     }

@@ -22,7 +22,7 @@ ApplicationWindow {
     Connections {
         target: tocks
 
-        function onAccountActivated() {
+        function onAccountsChanged() {
             applicationStack.replace(login, mainWindow)
         }
 

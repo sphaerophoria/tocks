@@ -7,39 +7,7 @@ import "Colors.js" as Colors
 
 RowLayout  {
     id: root
-    // Stored as friendCache[accountId][friendId] = Friend
-    property var userCache: ({})
-    property var chatCache: ({})
-
     spacing: 0
-
-    Connections {
-        target: tocks
-
-        function onAccountActivated(account) {
-            accountsModel.append(account)
-            root.userCache[account.id] = {}
-            root.userCache[account.id][account.userId] = account
-
-            root.chatCache[account.id] = {}
-        }
-
-        function onFriendAdded(accountId, friend) {
-            root.userCache[accountId][friend.userId] = friend
-            root.chatCache[accountId][friend.chatId] = {"name": friend.name}
-        }
-    }
-
-    ListModel {
-        id: accountsModel
-
-        onCountChanged: {
-            if (accountSelector.currentIndex === -1) {
-                accountSelector.currentIndex = 0
-            }
-        }
-    }
-
 
     Rectangle {
         Layout.fillWidth: false
@@ -58,14 +26,13 @@ RowLayout  {
 
                 Layout.fillWidth: true
 
-                model: accountsModel
+                model: tocks.accounts
                 textRole: "name"
             }
 
             FriendsList {
                 id: friendsList
-
-                account: accountsModel.get(accountSelector.currentIndex)
+                account: tocks.accounts[accountSelector.currentIndex]
 
                 Layout.fillHeight: true
                 Layout.fillWidth: true
@@ -74,19 +41,23 @@ RowLayout  {
             Connections {
                 target: friendsList
 
-                function onChatSelected(chat_id) {
-                    tocks.updateChatModel(friendsList.account.id, chat_id)
+                function onFriendSelected(friend) {
+                    if (tocks.accounts !== undefined) {
+                        tocks.updateChatModel(tocks.accounts[accountSelector.currentIndex].id, friend.chatId)
+                    }
+                    chatRoom.friend = friend
                 }
             }
         }
     }
 
     ChatRoom {
+        id: chatRoom
         Layout.fillHeight: true
         Layout.fillWidth: true
 
-        account: accountsModel.get(accountSelector.currentIndex)
-        chatId: chatModel.chat
+        account: tocks.accounts[accountSelector.currentIndex]
+        friend: undefined
     }
 }
 

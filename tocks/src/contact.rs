@@ -50,7 +50,7 @@ impl Friend {
         &self.status
     }
 
-    pub(crate) fn set_status(&mut self, status: Status) {
+    pub fn set_status(&mut self, status: Status) {
         self.status = status
     }
 }

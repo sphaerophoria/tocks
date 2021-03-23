@@ -9,7 +9,7 @@ Rectangle {
     id: root
 
     required property var account
-    required property int chatId
+    required property var friend
 
     color: "white"
 
@@ -18,7 +18,7 @@ Rectangle {
         spacing: 0
 
         ChatHeader {
-            chatId: root.chatId
+            friend: root.friend
 
             Layout.fillWidth: true
             Layout.minimumHeight: 40
@@ -62,7 +62,7 @@ Rectangle {
                         event.accepted = false
                         return
                     }
-                    tocks.sendMessage(account.id, chatId, text)
+                    tocks.sendMessage(account.id, friend.chatId, text)
                     text = ""
                 }
 

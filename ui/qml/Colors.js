@@ -7,5 +7,9 @@ var button = "#736490"
 var buttonDown = "#826ba6"
 var buttonText = sidebarText
 var spacer = "#dddddd"
+var onlineStatus = "#39ce41"
+var awayStatus = "#eced44"
+var busyStatus = "#d93736"
+var offlineStatus = "grey"
 
 var background = "#ffffff"

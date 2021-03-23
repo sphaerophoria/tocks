@@ -2,7 +2,7 @@ mod account;
 mod contacts;
 
 use account::Account;
-use contacts::{Friend, FriendRequest};
+use contacts::{FriendRequest};
 
 use tocks::{
     AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle,
@@ -15,7 +15,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use std::{
     str::FromStr,
     collections::HashMap,
-    sync::{Arc, Barrier},
+    sync::{Arc, Barrier, RwLock},
+    cell::RefCell,
     thread::JoinHandle,
 };
 
@@ -46,25 +47,11 @@ impl ChatModel {
         self.chat = chat.id();
         self.chatChanged();
 
-        if self.chat_log.len() > 0 {
-            (self as &dyn QAbstractItemModel).begin_remove_rows(
-                QModelIndex::default(),
-                0,
-                (self.chat_log.len() - 1) as i32,
-            );
-            (self as &dyn QAbstractItemModel).end_remove_rows();
-        }
+        (self as &dyn QAbstractItemModel).begin_reset_model();
 
         self.chat_log = content;
 
-        if self.chat_log.len() > 0 {
-            (self as &dyn QAbstractItemModel).begin_insert_rows(
-                QModelIndex::default(),
-                0,
-                (self.chat_log.len() - 1) as i32,
-            );
-            (self as &dyn QAbstractItemModel).end_insert_rows();
-        }
+        (self as &dyn QAbstractItemModel).end_reset_model();
     }
 
     fn push_message(&mut self, entry: ChatLogEntry) {
@@ -158,22 +145,22 @@ impl QAbstractItemModel for ChatModel {
 #[derive(QObject)]
 struct QTocks {
     base: qt_base_class!(trait QObject),
+    accounts: qt_property!(QVariantList; READ get_accounts NOTIFY accountsChanged),
+    accountsChanged: qt_signal!(),
+    newAccount: qt_method!(fn(&self, name: QString, password: QString)),
     close: qt_method!(fn(&self)),
     addFriendByPublicKey: qt_method!(fn(&self, account: i64, friend: QString)),
     login: qt_method!(fn(&self, account_name: QString, password: QString)),
-    newAccount: qt_method!(fn(&self, name: QString, password: QString)),
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
     inactiveAccountAdded: qt_signal!(name: QString),
-    accountActivated: qt_signal!(account: Account),
-    friendAdded: qt_signal!(account: i64, friend: Friend),
     friendRequestReceived: qt_signal!(account: i64, request: FriendRequest),
-    friendStatusChanged: qt_signal!(accountId: i64, friendId: i64, status: QString),
     error: qt_signal!(error: QString),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
     tocks_event_rx: UnboundedReceiver<TocksEvent>,
     chat_model: QObjectBox<ChatModel>,
+    accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
 }
 
 impl QTocks {
@@ -183,21 +170,21 @@ impl QTocks {
     ) -> QTocks {
         QTocks {
             base: Default::default(),
+            accounts: Default::default(),
+            accountsChanged: Default::default(),
+            newAccount: Default::default(),
             close: Default::default(),
             addFriendByPublicKey: Default::default(),
             login: Default::default(),
-            newAccount: Default::default(),
             sendMessage: Default::default(),
             inactiveAccountAdded: Default::default(),
             updateChatModel: Default::default(),
-            accountActivated: Default::default(),
-            friendAdded: Default::default(),
             friendRequestReceived: Default::default(),
-            friendStatusChanged: Default::default(),
             error: Default::default(),
             ui_requests_tx,
             tocks_event_rx,
             chat_model: QObjectBox::new(Default::default()),
+            accounts_storage: Default::default(),
         }
     }
 
@@ -207,7 +194,6 @@ impl QTocks {
 
     #[allow(non_snake_case)]
     fn addFriendByPublicKey(&self, account: i64, friend: QString) {
-        let self_public_key = PublicKey::from_str(&account.to_string()).unwrap();
         let friend_public_key = PublicKey::from_str(&friend.to_string()).unwrap();
         self.send_ui_request(TocksUiEvent::AddFriendByPublicKey(
             AccountId::from(account),
@@ -238,7 +224,7 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn sendMessage(&mut self, account: i64, chat: i64, message: QString) {
+    fn sendMessage(&self, account: i64, chat: i64, message: QString) {
         let message = message.to_string();
 
         self.send_ui_request(TocksUiEvent::MessageSent(
@@ -248,30 +234,30 @@ impl QTocks {
         ));
     }
 
-    fn set_account_list(&mut self, account_list: Vec<String>) {
+    fn set_account_list(&self, account_list: Vec<String>) {
         for account in account_list {
             self.inactiveAccountAdded(account.into());
         }
     }
 
     fn account_login(
-        &mut self,
+        &self,
         account_id: AccountId,
         user: UserHandle,
         address: ToxId,
         name: String,
     ) {
-        let qaccount = Account {
-            id: account_id.id(),
-            userId: user.id(),
-            toxId: address.to_string().into(),
-            name: name.into(),
-        };
-
-        self.accountActivated(qaccount);
+        let account = Box::new(RefCell::new(Account::new(account_id, user, address, name)));
+        unsafe { QObject::cpp_construct(&account); }
+        self.accounts_storage.write().unwrap().insert(account_id, account);
+        self.accountsChanged();
     }
 
-    fn incoming_friend_request(&mut self, account: AccountId, request: toxcore::FriendRequest) {
+    fn get_accounts(&self) -> QVariantList {
+        self.accounts_storage.read().unwrap().values().map(|item| unsafe {(&*item.borrow() as &dyn QObject).as_qvariant()} ).collect()
+    }
+
+    fn incoming_friend_request(&self, account: AccountId, request: toxcore::FriendRequest) {
         self.friendRequestReceived(
             account.id(),
             FriendRequest {
@@ -287,7 +273,7 @@ impl QTocks {
         }
     }
 
-    fn handle_ui_callback(&mut self, event: TocksEvent) {
+    fn handle_ui_callback(&self, event: TocksEvent) {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
             TocksEvent::Error(e) => self.error(e.into()),
@@ -298,7 +284,7 @@ impl QTocks {
                 self.account_login(account_id, user_handle, address, name)
             }
             TocksEvent::FriendAdded(account, friend) => {
-                self.friendAdded(account.id(), Friend::from(&friend));
+                self.accounts_storage.read().unwrap().get(&account).unwrap().borrow().add_friend(&friend);
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
                 self.chat_model
@@ -321,7 +307,7 @@ impl QTocks {
                 }
             }
             TocksEvent::FriendStatusChanged(account_id, user_id, status) => {
-                self.friendStatusChanged(account_id.id(), user_id.id(), status_to_qstring(&status));
+                self.accounts_storage.read().unwrap().get(&account_id).unwrap().borrow().set_friend_status(user_id, status);
             }
         }
     }

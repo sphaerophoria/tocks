@@ -11,6 +11,7 @@ ListView {
     bottomMargin: 5
 
     required property var account
+
     width: 600
 
     spacing: 10
