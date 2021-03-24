@@ -157,7 +157,7 @@ impl Tocks {
                     .with_context(|| format!("Failed to create account {}", account_name))?;
 
                 let account_id = self.account_manager.add_account(account);
-                let account = &self.account_manager.get(&account_id).unwrap();
+                let account = self.account_manager.get(&account_id).unwrap();
 
                 let user_handle = account.user_handle();
                 let address = account.address();
@@ -230,6 +230,7 @@ impl Tocks {
                 .handle_ui_request(request)
                 .context("Failed to handle UI request"),
             Event::Tocks(e) => {
+                // Propagate event from lower down
                 Self::send_tocks_event(&self.tocks_event_tx, e);
                 Ok(false)
             }

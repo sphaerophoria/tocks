@@ -265,7 +265,7 @@ impl Storage {
         transaction
             .execute(
                 "INSERT INTO messages (chat_id, sender_id, timestamp) \
-            VALUES (?1, ?2, ?3)",
+                VALUES (?1, ?2, ?3)",
                 params![chat.chat_id, sender.user_id, timestamp],
             )
             .context("Failed to insert message into messages table")?;
@@ -277,7 +277,7 @@ impl Storage {
         transaction
             .execute(
                 "INSERT INTO text_messages (message_id, message, action) \
-            VALUES (?1, ?2, ?3)",
+                VALUES (?1, ?2, ?3)",
                 params![id.msg_id, message_str, is_action],
             )
             .context("Failed to insert message into text_messages table")?;
@@ -369,8 +369,17 @@ impl Storage {
     }
 
     pub fn unresovled_messages(&mut self, chat_handle: &ChatHandle) -> Result<Vec<UnsentMessage>> {
-        let mut statement = self.connection.prepare(
-            "SELECT messages.id, text_messages.message, text_messages.action FROM messages JOIN pending_messages ON pending_messages.message_id = messages.id JOIN text_messages ON messages.id = text_messages.message_id WHERE messages.chat_id = ?1")
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT messages.id, text_messages.message, text_messages.action \
+                FROM messages \
+                JOIN pending_messages \
+                ON pending_messages.message_id = messages.id \
+                JOIN text_messages \
+                ON messages.id = text_messages.message_id \
+                WHERE messages.chat_id = ?1",
+            )
             .context("Failed to prepare unresolved message query")?;
 
         let res = statement
