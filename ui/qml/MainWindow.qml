@@ -4,60 +4,81 @@ import QtQml 2.15
 import QtQuick.Layouts 1.11
 
 import "Colors.js" as Colors
+import "SidebarConstants.js" as SidebarConstants
 
 RowLayout  {
     id: root
     spacing: 0
 
-    Rectangle {
+    Sidebar {
+        id: sidebar
         Layout.fillWidth: false
         Layout.fillHeight: true
-        Layout.preferredWidth: 175
+        Layout.preferredWidth: SidebarConstants.sidebarWidth
 
-        color: Colors.sidebarColor
-
-        ColumnLayout {
-            anchors.fill: parent
-
-            spacing: 0
-
-            TocksComboBox {
-                id: accountSelector
-
-                Layout.fillWidth: true
-
-                model: tocks.accounts
-                textRole: "name"
+        onSelectedAccountChanged: {
+            if (selectedFriend === undefined) {
+                contentLoader.sourceComponent = accountPage
             }
+        }
 
-            FriendsList {
-                id: friendsList
-                account: tocks.accounts[accountSelector.currentIndex]
-
-                Layout.fillHeight: true
-                Layout.fillWidth: true
-            }
-
-            Connections {
-                target: friendsList
-
-                function onFriendSelected(friend) {
-                    if (tocks.accounts !== undefined) {
-                        tocks.updateChatModel(tocks.accounts[accountSelector.currentIndex].id, friend.chatId)
-                    }
-                    chatRoom.friend = friend
-                }
+        onSelectedFriendChanged: {
+            if (selectedAccount !== undefined && selectedFriend !== undefined) {
+                tocks.updateChatModel(selectedAccount.id, selectedFriend.chatId)
+                contentLoader.sourceComponent = chatRoom
             }
         }
     }
 
-    ChatRoom {
-        id: chatRoom
+    Connections {
+        target: sidebar
+
+        function onNewAccountClicked() {
+            contentLoader.sourceComponent = loginPage
+        }
+
+        function onSettingsClicked() {
+            contentLoader.sourceComponent = settingsPage
+        }
+    }
+
+
+    Loader {
+        id: contentLoader
         Layout.fillHeight: true
         Layout.fillWidth: true
+    }
 
-        account: tocks.accounts[accountSelector.currentIndex]
-        friend: undefined
+    Component {
+        id: chatRoom
+        ChatRoom {
+            anchors.fill: parent
+            account: sidebar.selectedAccount
+            friend: sidebar.selectedFriend
+        }
+    }
+
+    Component {
+        id: settingsPage
+        Rectangle {
+            anchors.fill: parent
+            color: "black"
+        }
+    }
+
+    Component {
+        id: accountPage
+        AccountPage {
+            anchors.fill: parent
+            account: sidebar.selectedAccount
+        }
+    }
+
+    Component {
+        id: loginPage
+        Login {
+            anchors.fill: parent
+        }
     }
 }
 

@@ -23,17 +23,14 @@ ApplicationWindow {
         target: tocks
 
         function onAccountsChanged() {
-            applicationStack.replace(login, mainWindow)
+            if (tocks.accounts.length === 1) {
+                applicationStack.replace(login, mainWindow)
+            }
         }
 
         function onError(error) {
             console.log(error)
         }
-    }
-
-    Component.onCompleted: {
-        login.login.connect(tocks.login)
-        login.newAccount.connect(tocks.newAccount)
     }
 
     Login {

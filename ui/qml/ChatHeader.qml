@@ -9,12 +9,11 @@ Rectangle {
     color: "white"
 
     Row {
-
         leftPadding: 10
 
         Text {
             anchors.verticalCenter: parent.verticalCenter
-            text: friend.name
+            text: friend !== undefined ? friend.name : ""
             font.bold: true
         }
     }

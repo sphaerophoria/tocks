@@ -148,20 +148,21 @@ struct QTocks {
     base: qt_base_class!(trait QObject),
     accounts: qt_property!(QVariantList; READ get_accounts NOTIFY accountsChanged),
     accountsChanged: qt_signal!(),
+    offlineAccounts: qt_property!(QVariantList; READ get_offline_accounts NOTIFY offlineAccountsChanged),
+    offlineAccountsChanged: qt_signal!(),
     newAccount: qt_method!(fn(&self, name: QString, password: QString)),
     close: qt_method!(fn(&self)),
     addFriendByPublicKey: qt_method!(fn(&self, account: i64, friend: QString)),
     login: qt_method!(fn(&self, account_name: QString, password: QString)),
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
-    inactiveAccountAdded: qt_signal!(name: QString),
-    friendRequestReceived: qt_signal!(account: i64, request: FriendRequest),
     error: qt_signal!(error: QString),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
     tocks_event_rx: UnboundedReceiver<TocksEvent>,
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
+    offline_accounts: RwLock<Vec<String>>,
 }
 
 impl QTocks {
@@ -173,19 +174,20 @@ impl QTocks {
             base: Default::default(),
             accounts: Default::default(),
             accountsChanged: Default::default(),
+            offlineAccounts: Default::default(),
+            offlineAccountsChanged: Default::default(),
             newAccount: Default::default(),
             close: Default::default(),
             addFriendByPublicKey: Default::default(),
             login: Default::default(),
             sendMessage: Default::default(),
-            inactiveAccountAdded: Default::default(),
             updateChatModel: Default::default(),
-            friendRequestReceived: Default::default(),
             error: Default::default(),
             ui_requests_tx,
             tocks_event_rx,
             chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
+            offline_accounts: Default::default(),
         }
     }
 
@@ -217,7 +219,7 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn updateChatModel(&mut self, account: i64, chat_handle: i64) {
+    fn updateChatModel(&self, account: i64, chat_handle: i64) {
         self.send_ui_request(TocksUiEvent::LoadMessages(
             AccountId::from(account),
             ChatHandle::from(chat_handle),
@@ -235,10 +237,19 @@ impl QTocks {
         ));
     }
 
-    fn set_account_list(&self, account_list: Vec<String>) {
-        for account in account_list {
-            self.inactiveAccountAdded(account.into());
+    fn get_offline_accounts(&self) -> QVariantList {
+        let mut accounts  = QVariantList::default();
+        accounts.push(QString::from("Create a new account...").to_qvariant());
+        for account in &*self.offline_accounts.read().unwrap() {
+            accounts.push(QString::from(account.as_ref()).to_qvariant())
         }
+
+        accounts
+    }
+
+    fn set_account_list(&self, account_list: Vec<String>) {
+        *self.offline_accounts.write().unwrap() = account_list;
+        self.offlineAccountsChanged();
     }
 
     fn account_login(&self, account_id: AccountId, user: UserHandle, address: ToxId, name: String) {
@@ -262,28 +273,27 @@ impl QTocks {
             .collect()
     }
 
-    fn incoming_friend_request(&self, account: AccountId, request: toxcore::FriendRequest) {
-        self.friendRequestReceived(
-            account.id(),
-            FriendRequest {
-                sender: request.public_key.to_string().into(),
-                message: request.message.into(),
-            },
-        );
-    }
-
     fn send_ui_request(&self, request: TocksUiEvent) {
         if let Err(e) = self.ui_requests_tx.send(request) {
             error!("tocks app not responding to UI requests: {}", e);
         }
     }
 
-    fn handle_ui_callback(&self, event: TocksEvent) {
+    fn handle_ui_callback(& self, event: TocksEvent) {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
             TocksEvent::Error(e) => self.error(e.into()),
             TocksEvent::FriendRequestReceived(account, request) => {
-                self.incoming_friend_request(account, request)
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account)
+                    .unwrap()
+                    .borrow()
+                    .push_friend_request(FriendRequest {
+                        sender: request.public_key.to_string().into(),
+                        message: request.message.into(),
+                    });
             }
             TocksEvent::AccountLoggedIn(account_id, user_handle, address, name) => {
                 self.account_login(account_id, user_handle, address, name)

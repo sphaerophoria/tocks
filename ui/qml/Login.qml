@@ -8,18 +8,6 @@ import "Colors.js" as Colors
 RowLayout {
     id: root
 
-    signal login(string accountName, string password)
-    signal newAccount(string accountName, string password)
-
-    Connections {
-
-        target: tocks
-
-        function onInactiveAccountAdded(name) {
-            accountModel.append({name: name})
-        }
-    }
-
     width: 200
 
     ColumnLayout {
@@ -54,13 +42,7 @@ RowLayout {
             id: comboBox
             Layout.fillWidth: true
 
-            model: ListModel {
-                id: accountModel
-
-                ListElement {
-                    name: "Create a new account..."
-                }
-            }
+            model: tocks.offlineAccounts
         }
 
         TextField {
@@ -84,9 +66,9 @@ RowLayout {
 
             onClicked: {
                 if (comboBox.currentIndex != 0) {
-                    root.login(comboBox.currentText, password.text)
+                    tocks.login(comboBox.currentText, password.text)
                 } else {
-                    root.newAccount(name.text, password.text)
+                    tocks.newAccount(name.text, password.text)
                 }
             }
         }

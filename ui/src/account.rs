@@ -1,4 +1,4 @@
-use crate::contacts::Friend;
+use crate::contacts::{Friend, FriendRequest};
 
 use qmetaobject::*;
 use tocks::{AccountId, UserHandle};
@@ -13,12 +13,17 @@ pub struct Account {
     id: qt_property!(i64),
     userId: qt_property!(i64; NOTIFY userIdChanged),
     userIdChanged: qt_signal!(),
-    toxId: qt_property!(QString),
-    name: qt_property!(QString),
+    toxId: qt_property!(QString; NOTIFY toxIdChanged),
+    toxIdChanged: qt_signal!(),
+    name: qt_property!(QString; NOTIFY nameChanged),
     nameChanged: qt_signal!(),
     friends: qt_property!(QVariantList; READ get_friends NOTIFY friendsChanged),
     friendsChanged: qt_signal!(),
+    friendRequests: qt_property!(QVariantList; READ get_friend_requests NOTIFY friendRequestsChanged),
+    friendRequestsChanged: qt_signal!(),
+
     friends_storage: Mutex<HashMap<UserHandle, Box<RefCell<Friend>>>>,
+    friend_requests: Mutex<Vec<FriendRequest>>,
 }
 
 impl Account {
@@ -29,11 +34,16 @@ impl Account {
             userId: user.id(),
             userIdChanged: Default::default(),
             toxId: address.to_string().into(),
+            toxIdChanged: Default::default(),
             name: name.into(),
             nameChanged: Default::default(),
             friends: Default::default(),
             friendsChanged: Default::default(),
+            friendRequests: Default::default(),
+            friendRequestsChanged: Default::default(),
+
             friends_storage: Default::default(),
+            friend_requests: Default::default(),
         }
     }
 
@@ -59,4 +69,14 @@ impl Account {
             .borrow_mut()
             .set_status(status);
     }
+
+    fn get_friend_requests(&self) -> QVariantList {
+        self.friend_requests.lock().unwrap().iter().map(|item| item.to_qvariant()).collect()
+    }
+
+    pub fn push_friend_request(&self, request: FriendRequest) {
+        self.friend_requests.lock().unwrap().push(request);
+        self.friendRequestsChanged();
+    }
 }
+

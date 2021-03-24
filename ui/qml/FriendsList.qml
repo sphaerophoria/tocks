@@ -2,69 +2,85 @@ import QtQuick 2.4
 import QtQuick.Layouts 1.11
 import QtQuick.Controls 2.15
 import "Colors.js" as Colors
+import "SidebarConstants.js" as SidebarConstants
 
 Rectangle {
     id: root
 
     property var account
+    property var selectedFriend
 
-    signal friendSelected(var friend);
+    function clearSelection() {
+        friendList.currentIndex = -1
+    }
 
     color: Colors.sidebarColor
 
-    ColumnLayout {
+    // As far as I understand the ListView doesn't know how large the view
+    // will be until it is rendered. I want this to be dynamically sized to
+    // the contents, so inform the root object of the size I know will will be
+    // calculated by the listview
+    height: account.friends.length * SidebarConstants.friendHeight
+
+    ListView {
+        id: friendList
 
         anchors.fill: parent
-        spacing: 0
+        interactive: false
 
-        ListView {
-
-            Layout.fillHeight: true
-
-            id: friendList
-
-            onCurrentItemChanged: {
-                root.friendSelected(account.friends[currentIndex])
-            }
-
-            model: account.friends
-
-            delegate: Rectangle {
-                width: root.width
-                height: 30
-
-                color: friendList.currentIndex == index ? Colors.sidebarHighlight : "transparent"
-
-                RowLayout {
-                    anchors.fill: parent
-                    width: root.width
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 10
-                        Layout.alignment: Qt.AlignVCenter
-                        text: modelData.name
-                        color: Colors.sidebarText
-                    }
-
-                    StatusIcon {
-                        Layout.fillHeight: true
-                        Layout.margins: 10
-                        Layout.preferredWidth: height
-
-                        status: modelData.status
-                    }
-                }
-
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: friendList.currentIndex = index
-                }
-            }
-
-            ScrollBar.vertical: ScrollBar {}
+        onCurrentItemChanged: {
+            root.selectedFriend = account.friends[currentIndex]
         }
+
+        model: account.friends
+
+        delegate: Rectangle {
+            width: root.width
+            height: SidebarConstants.friendHeight
+
+            function getColor() {
+                if (friendList.currentIndex === index) {
+                    return Colors.sidebarHighlight
+                } else if (mouseArea.containsMouse) {
+                    return Colors.sidebarItemHover
+                } else {
+                    return "transparent"
+                }
+            }
+
+            color: getColor()
+
+            RowLayout {
+                anchors.fill: parent
+                width: root.width
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: SidebarConstants.contentMargins
+                    Layout.alignment: Qt.AlignVCenter
+                    text: modelData.name
+                    color: Colors.sidebarText
+                }
+
+                StatusIcon {
+                    Layout.fillHeight: true
+                    Layout.margins: SidebarConstants.contentMargins
+                    Layout.preferredWidth: height
+
+                    status: modelData.status
+                }
+            }
+
+
+            MouseArea {
+                id: mouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: friendList.currentIndex = index
+            }
+        }
+
+        ScrollBar.vertical: ScrollBar {}
     }
 }
 
