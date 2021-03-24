@@ -9,7 +9,10 @@ use paste::paste;
 
 use toxcore_sys::*;
 
-use std::ffi::{CStr, CString, NulError};
+use std::{
+    pin::Pin,
+    ffi::{CStr, CString, NulError}
+};
 
 macro_rules! impl_builder_option {
     ($field_name: ident, $tag: ident, $type:ty) => {
@@ -129,6 +132,7 @@ struct ToxBuilderImpl<Api: ToxOptionsApi> {
     api: Api,
     options: *mut Tox_Options,
     event_callback: Option<ToxEventCallback>,
+    savedata: SaveData,
     log: bool,
 }
 
@@ -145,6 +149,7 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
             api,
             options,
             event_callback: None,
+            savedata: SaveData::None,
             log: false,
         })
     }
@@ -180,20 +185,7 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
     }
 
     pub fn savedata(&mut self, data: SaveData) {
-        match data {
-            SaveData::ToxSave(data) => unsafe {
-                self.api
-                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_TOX_SAVE);
-                self.api
-                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
-            },
-            SaveData::SecretKey(data) => unsafe {
-                self.api
-                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_SECRET_KEY);
-                self.api
-                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
-            },
-        }
+        self.savedata = data;
     }
 
     pub fn log(&mut self, enable: bool) {
@@ -229,6 +221,24 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
                 self.api
                     .set_log_callback(self.options, Some(tox_log_callback));
             }
+        }
+
+        let data = Pin::new(&self.savedata);
+
+        match &*data {
+            SaveData::ToxSave(data) => unsafe {
+                self.api
+                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_TOX_SAVE);
+                self.api
+                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
+            },
+            SaveData::SecretKey(data) => unsafe {
+                self.api
+                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_SECRET_KEY);
+                self.api
+                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
+            },
+            SaveData::None => {}
         }
 
         let mut err = TOX_ERR_NEW_OK;
@@ -473,9 +483,15 @@ mod tests {
             .return_const(())
             .once();
 
-        BuilderFixture::new(mock)?
+        let mut fixture = BuilderFixture::new(mock)?;
+
+        fixture
             .builder
-            .savedata(SaveData::ToxSave(&savedata));
+            .savedata(SaveData::ToxSave(savedata));
+
+
+        fixture.builder.build(generate_tox_api_mock()).unwrap();
+
 
         Ok(())
     }
@@ -500,9 +516,14 @@ mod tests {
             .return_const(())
             .once();
 
-        BuilderFixture::new(mock)?
+        let mut fixture = BuilderFixture::new(mock)?;
+
+        fixture
             .builder
-            .savedata(SaveData::SecretKey(&savedata));
+            .savedata(SaveData::SecretKey(savedata));
+
+
+        fixture.builder.build(generate_tox_api_mock()).unwrap();
 
         Ok(())
     }

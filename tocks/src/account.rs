@@ -60,7 +60,7 @@ impl Account {
             return Err(anyhow!("Password support is not implemented"));
         }
 
-        let builder = Tox::builder()?.savedata(toxcore::SaveData::ToxSave(&account_vec));
+        let builder = Tox::builder()?.savedata(toxcore::SaveData::ToxSave(account_vec));
 
         Self::from_builder(builder)
     }

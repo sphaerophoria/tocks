@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Options::Load { key } => {
             let key = hex::decode(key).unwrap();
-            let data = SaveData::SecretKey(&key);
+            let data = SaveData::SecretKey(key);
             builder.savedata(data).build()?
         }
     };

@@ -19,9 +19,10 @@ use hex::FromHex;
 
 use std::fmt;
 
-pub enum SaveData<'a> {
-    ToxSave(&'a [u8]),
-    SecretKey(&'a [u8]),
+pub enum SaveData {
+    ToxSave(Vec<u8>),
+    SecretKey(Vec<u8>),
+    None,
 }
 pub enum ProxyType {
     None,
