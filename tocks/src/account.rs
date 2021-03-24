@@ -157,6 +157,7 @@ impl Account {
         &self.user_handle
     }
 
+    #[allow(dead_code)]
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }

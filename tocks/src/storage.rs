@@ -1,6 +1,6 @@
 use crate::contact::Friend;
 
-use toxcore::{Message, PublicKey, Receipt, Status};
+use toxcore::{Message, PublicKey, Status};
 
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
@@ -106,7 +106,6 @@ impl UnsentMessage {
 }
 
 pub(crate) struct Storage {
-    ram_db: bool,
     connection: Connection,
 }
 
@@ -118,7 +117,6 @@ impl Storage {
         initialize_db(&mut connection)?;
 
         Ok(Storage {
-            ram_db: false,
             connection,
         })
     }
@@ -129,7 +127,6 @@ impl Storage {
 
         initialize_db(&mut connection)?;
         Ok(Storage {
-            ram_db: true,
             connection,
         })
     }
@@ -362,7 +359,7 @@ impl Storage {
 
     pub fn resolve_message(
         &mut self,
-        chat_handle: &ChatHandle,
+        _chat_handle: &ChatHandle,
         message_id: &ChatMessageId,
     ) -> Result<()> {
         self.connection
