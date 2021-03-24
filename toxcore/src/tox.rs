@@ -105,6 +105,10 @@ impl Tox {
         self.inner.self_name()
     }
 
+    pub fn self_set_name(&mut self, name: &str) -> Result<(), SetInfoError> {
+        self.inner.self_set_name(name)
+    }
+
     /// Retrieves all added toxcore friends
     pub fn friends(&mut self) -> Result<Vec<Friend>, ToxAddFriendError> {
         self.inner.friends()
@@ -255,6 +259,19 @@ impl<Api: ToxApi> ToxImpl<Api> {
             name_unparsed.set_len(length);
 
             String::from_utf8_lossy(&name_unparsed).to_string()
+        }
+    }
+
+    pub fn self_set_name(&mut self, name: &str) -> Result<(), SetInfoError> {
+        unsafe {
+            let mut err = TOX_ERR_SET_INFO_OK;
+            self.api.self_set_name(self.sys_tox.get_mut(), name.as_ptr(), name.len() as u64, &mut err);
+
+            if err != TOX_ERR_SET_INFO_OK {
+                return Err(SetInfoError);
+            }
+
+            Ok(())
         }
     }
 

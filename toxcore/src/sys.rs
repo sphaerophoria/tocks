@@ -26,6 +26,7 @@ pub trait ToxApi: Send + Sync {
     unsafe fn self_get_address(&self, tox: *const toxcore_sys::Tox, address: *mut u8);
     unsafe fn self_get_name_size(&self, tox: *const toxcore_sys::Tox) -> u64;
     unsafe fn self_get_name(&self, tox: *const toxcore_sys::Tox, name: *mut u8);
+    unsafe fn self_set_name(&self, tox: *mut toxcore_sys::Tox, name: *const u8, length: u64, error: *mut TOX_ERR_SET_INFO) -> bool;
     unsafe fn self_get_friend_list_size(&self, tox: *const toxcore_sys::Tox) -> u64;
     unsafe fn self_get_friend_list(&self, tox: *const toxcore_sys::Tox, friend_list: *mut u32);
     unsafe fn friend_add_norequest(
@@ -161,6 +162,10 @@ impl ToxApi for ToxApiImpl {
 
     unsafe fn self_get_name(&self, tox: *const toxcore_sys::Tox, name: *mut u8) {
         tox_self_get_name(tox, name)
+    }
+
+    unsafe fn self_set_name(&self, tox: *mut toxcore_sys::Tox, name: *const u8, length: u64, error: *mut TOX_ERR_SET_INFO) -> bool {
+        tox_self_set_name(tox, name, length, error)
     }
 
     unsafe fn self_get_friend_list_size(&self, tox: *const toxcore_sys::Tox) -> u64 {

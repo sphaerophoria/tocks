@@ -158,3 +158,7 @@ pub struct EncryptionError;
 #[derive(Error, Debug)]
 #[error("Decryption failed")]
 pub struct DecryptionError;
+
+#[derive(Error, Debug)]
+#[error("Info too long")]
+pub struct SetInfoError;

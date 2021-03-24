@@ -47,9 +47,10 @@ pub(crate) struct Account {
 }
 
 impl Account {
-    pub fn from_account_name(mut account_name: String, password: String) -> Result<Account> {
-        account_name.push_str(".tox");
-        let account_file_path = TOX_SAVE_DIR.join(account_name);
+    pub fn from_account_name(account_name: String, password: String) -> Result<Account> {
+        let mut account_file = account_name.clone();
+        account_file.push_str(".tox");
+        let account_file_path = TOX_SAVE_DIR.join(account_file);
 
         let save_manager = if password.is_empty() {
             SaveManager::new_unencrypted(account_file_path)
@@ -81,7 +82,9 @@ impl Account {
         let mut name = tox.self_name();
 
         if name.is_empty() {
-            name = self_public_key.to_string();
+            tox.self_set_name(&account_name)
+                .context("Failed to initialize account name")?;
+            name = tox.self_name();
         }
 
         let db_name = format!("{}.db", name);
