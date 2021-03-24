@@ -5,6 +5,7 @@ pub mod contact;
 
 mod account;
 mod storage;
+mod savemanager;
 
 pub use crate::{
     account::AccountId,
@@ -114,11 +115,7 @@ impl Tocks {
                 return Ok(true);
             }
             TocksUiEvent::CreateAccount(name, password) => {
-                if !password.is_empty() {
-                    warn!("Account passwords are not yet supported");
-                }
-
-                let account = Account::create(name).context("Failed to create account")?;
+                let account = Account::from_account_name(name, password).context("Failed to create account")?;
 
                 let account_id = self.account_manager.add_account(account);
                 let account = self.account_manager.get(&account_id).unwrap();

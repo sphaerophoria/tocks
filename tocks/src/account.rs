@@ -1,12 +1,13 @@
 use crate::{
     contact::{Friend, UserManager},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
+    savemanager::SaveManager,
     Event, TocksEvent, APP_DIRS,
 };
 
 use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Status, Tox, ToxId};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
@@ -16,8 +17,7 @@ use tokio::sync::mpsc;
 use std::{
     collections::HashMap,
     fmt,
-    fs::{self, File},
-    io::Read,
+    fs,
     path::PathBuf,
 };
 
@@ -35,6 +35,7 @@ pub(crate) enum AccountEvent {
 
 pub(crate) struct Account {
     tox: Tox,
+    save_manager: SaveManager,
     user_manager: UserManager,
     storage: Storage,
     outgoing_messages: HashMap<Receipt, (ChatHandle, ChatMessageId)>,
@@ -46,39 +47,28 @@ pub(crate) struct Account {
 }
 
 impl Account {
-    pub fn create(_name: String) -> Result<Account> {
-        warn!("Created accounts are not saved and cannot set their names yet");
-
-        Self::from_builder(Tox::builder()?)
-    }
-
-    pub fn from_reader<T: Read>(account_buf: &mut T, password: String) -> Result<Account> {
-        let mut account_vec = Vec::new();
-        account_buf.read_to_end(&mut account_vec)?;
-
-        if !password.is_empty() {
-            return Err(anyhow!("Password support is not implemented"));
-        }
-
-        let builder = Tox::builder()?.savedata(toxcore::SaveData::ToxSave(account_vec));
-
-        Self::from_builder(builder)
-    }
-
     pub fn from_account_name(mut account_name: String, password: String) -> Result<Account> {
         account_name.push_str(".tox");
         let account_file_path = TOX_SAVE_DIR.join(account_name);
 
-        let mut account_file =
-            File::open(account_file_path).context("Failed to open tox account file")?;
+        let save_manager = if password.is_empty() {
+            SaveManager::new_unencrypted(account_file_path)
+        } else {
+            SaveManager::new_with_password(account_file_path, &password)
+                .context("Failed to create save manager")?
+        };
 
-        Self::from_reader(&mut account_file, password)
-    }
-
-    pub fn from_builder(builder: toxcore::ToxBuilder) -> Result<Account> {
         let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
 
-        let mut tox = builder
+        let builder = Tox::builder()?;
+
+        let savedata = save_manager.load();
+        let builder = match savedata {
+            Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
+            _ => builder
+        };
+
+        let mut tox  = builder
             .event_callback(move |event| {
                 toxcore_callback_tx
                     .send(event)
@@ -141,8 +131,12 @@ impl Account {
             user_manager.add_friend(friend, tox_friend);
         }
 
+        let savedata = tox.get_savedata();
+        save_manager.save(&savedata)?;
+
         Ok(Account {
             tox,
+            save_manager,
             user_manager,
             toxcore_callback_rx,
             storage,
@@ -181,6 +175,9 @@ impl Account {
             .tox
             .add_friend_norequest(&friend_key)
             .context("Failed to add friend by public key")?;
+
+        self.save_manager.save(&self.tox.get_savedata())
+            .context("Failed to save tox data after adding friend")?;
 
         let public_key = tox_friend.public_key();
 

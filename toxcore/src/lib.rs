@@ -6,11 +6,12 @@
 pub mod error;
 
 mod builder;
+mod encryption;
 mod friend;
 mod sys;
 mod tox;
 
-pub use crate::{builder::ToxBuilder, friend::Friend, tox::Tox};
+pub use crate::{builder::ToxBuilder, friend::Friend, tox::Tox, encryption::PassKey};
 use error::*;
 
 use toxcore_sys::{TOX_PUBLIC_KEY_SIZE, TOX_SECRET_KEY_SIZE};

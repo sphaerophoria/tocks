@@ -16,6 +16,8 @@ pub trait ToxApi: Send + Sync {
     unsafe fn kill(&self, tox: *mut toxcore_sys::Tox);
     unsafe fn iterate(&self, tox: *mut toxcore_sys::Tox, user_data: *mut ::std::os::raw::c_void);
     unsafe fn iteration_interval(&self, tox: *const toxcore_sys::Tox) -> u32;
+    unsafe fn get_savedata_size(&self, tox: *const toxcore_sys::Tox) -> u64;
+    unsafe fn get_savedata(&self, tox: *const toxcore_sys::Tox, savedata: *mut u8);
     unsafe fn public_key_size(&self) -> u32;
     unsafe fn self_get_public_key(&self, tox: *const toxcore_sys::Tox, public_key: *mut u8);
     unsafe fn secret_key_size(&self) -> u32;
@@ -119,6 +121,14 @@ impl ToxApi for ToxApiImpl {
 
     unsafe fn iteration_interval(&self, tox: *const toxcore_sys::Tox) -> u32 {
         tox_iteration_interval(tox)
+    }
+
+    unsafe fn get_savedata_size(&self, tox: *const toxcore_sys::Tox) -> u64 {
+        tox_get_savedata_size(tox)
+    }
+
+    unsafe fn get_savedata(&self, tox: *const toxcore_sys::Tox, savedata: *mut u8) {
+        tox_get_savedata(tox, savedata)
     }
 
     unsafe fn public_key_size(&self) -> u32 {
@@ -379,5 +389,43 @@ impl ToxOptionsApi for ToxOptionsSys {
         thread_safety: bool,
     ) {
         tox_options_set_experimental_thread_safety(options, thread_safety)
+    }
+}
+
+#[automock]
+pub trait ToxEncryptSaveApi: Send + Sync {
+    unsafe fn pass_key_free(&self, key: *mut Tox_Pass_Key);
+    unsafe fn pass_key_derive(&self, passphrase: *const u8, len: u64, err: *mut TOX_ERR_KEY_DERIVATION) -> *mut Tox_Pass_Key;
+    unsafe fn pass_key_derive_with_salt(&self, passphrase: *const u8, len: u64, salt: *const u8, err: *mut TOX_ERR_KEY_DERIVATION) -> *mut Tox_Pass_Key;
+    unsafe fn pass_key_encrypt(&self, key: *const Tox_Pass_Key, plaintext: *const u8, plaintext_len: u64, ciphertext: *mut u8, err: *mut TOX_ERR_ENCRYPTION) -> bool;
+    unsafe fn pass_key_decrypt(&self, key: *const Tox_Pass_Key, ciphertext: *const u8, ciphertext_len: u64, plaintext: *mut u8, err: *mut TOX_ERR_DECRYPTION) -> bool;
+    unsafe fn get_salt(&self, ciphertext: *const u8, salt: *mut u8, err: *mut TOX_ERR_GET_SALT) -> bool;
+}
+
+pub struct ToxEncryptSaveImpl;
+
+impl ToxEncryptSaveApi for ToxEncryptSaveImpl {
+    unsafe fn pass_key_free(&self, key: *mut Tox_Pass_Key) {
+        tox_pass_key_free(key)
+    }
+
+    unsafe fn pass_key_derive(&self, passphrase: *const u8, len: u64, err: *mut TOX_ERR_KEY_DERIVATION) -> *mut Tox_Pass_Key {
+        tox_pass_key_derive(passphrase, len, err)
+    }
+
+    unsafe fn pass_key_derive_with_salt(&self, passphrase: *const u8, len: u64, salt: *const u8, err: *mut TOX_ERR_KEY_DERIVATION) -> *mut Tox_Pass_Key {
+        tox_pass_key_derive_with_salt(passphrase, len, salt, err)
+    }
+
+    unsafe fn pass_key_encrypt(&self, key: *const Tox_Pass_Key, plaintext: *const u8, plaintext_len: u64, ciphertext: *mut u8, err: *mut TOX_ERR_ENCRYPTION) -> bool {
+        tox_pass_key_encrypt(key, plaintext, plaintext_len, ciphertext, err)
+    }
+
+    unsafe fn pass_key_decrypt(&self, key: *const Tox_Pass_Key, ciphertext: *const u8, ciphertext_len: u64, plaintext: *mut u8, err: *mut TOX_ERR_DECRYPTION) -> bool {
+        tox_pass_key_decrypt(key, ciphertext, ciphertext_len, plaintext, err)
+    }
+
+    unsafe fn get_salt(&self, ciphertext: *const u8, salt: *mut u8, err: *mut TOX_ERR_GET_SALT) -> bool {
+        tox_get_salt(ciphertext, salt, err)
     }
 }

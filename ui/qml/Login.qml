@@ -9,7 +9,7 @@ RowLayout {
     id: root
 
     signal login(string accountName, string password)
-    signal newAccount(string password)
+    signal newAccount(string accountName, string password)
 
     Connections {
 
@@ -64,6 +64,13 @@ RowLayout {
         }
 
         TextField {
+            id: name
+            visible: comboBox.currentIndex == 0
+            width: parent.width
+            placeholderText: qsTr("Name")
+        }
+
+        TextField {
             id: password
             width: parent.width
             echoMode: TextField.Password
@@ -79,7 +86,7 @@ RowLayout {
                 if (comboBox.currentIndex != 0) {
                     root.login(comboBox.currentText, password.text)
                 } else {
-                    root.newAccount(password.text)
+                    root.newAccount(name.text, password.text)
                 }
             }
         }

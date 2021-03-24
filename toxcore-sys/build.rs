@@ -20,11 +20,15 @@ fn main() {
     );
     println!("cargo:rustc-link-lib=static=toxcore");
 
-    let mut toxcore_header: PathBuf = include_path;
+    let mut toxcore_header: PathBuf = include_path.clone();
     toxcore_header.push("tox.h");
+
+    let mut toxencryptsave_header: PathBuf = include_path;
+    toxencryptsave_header.push("toxencryptsave.h");
 
     let bindings = bindgen::builder()
         .header(toxcore_header.to_string_lossy())
+        .header(toxencryptsave_header.to_string_lossy())
         .layout_tests(false)
         .prepend_enum_name(false)
         .generate()

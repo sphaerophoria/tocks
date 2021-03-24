@@ -127,6 +127,10 @@ impl Tox {
     ) -> Result<Receipt, ToxSendMessageError> {
         self.inner.send_message(friend, message)
     }
+
+    pub fn get_savedata(&self) -> Vec<u8> {
+        self.inner.get_savedata()
+    }
 }
 
 /// Wrapper struct to help us manage mutability of the interior tox pointer
@@ -334,6 +338,17 @@ impl<Api: ToxApi> ToxImpl<Api> {
             id: receipt_id,
             friend: friend.clone(),
         })
+    }
+
+    pub fn get_savedata(&self) -> Vec<u8> {
+        unsafe {
+            let data_size = self.api.get_savedata_size(self.sys_tox.get()) as usize;
+
+            let mut data = Vec::with_capacity(data_size);
+            self.api.get_savedata(self.sys_tox.get(), data.as_mut_ptr());
+            data.set_len(data_size);
+            data
+        }
     }
 
     /// Calls into toxcore to get the public key for the provided friend id
