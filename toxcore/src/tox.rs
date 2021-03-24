@@ -199,7 +199,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
         // strange
 
         ToxImpl {
-            api: api,
+            api,
             sys_tox: SysToxMutabilityWrapper { sys_tox },
             data: ToxData {
                 event_callback,
@@ -608,7 +608,7 @@ unsafe extern "C" fn tox_friend_status_callback<Api: ToxApi>(
 
     let converted_status = convert_status(status);
 
-    if let Err(_) = converted_status {
+    if converted_status.is_err() {
         warn!("Invalid incoming status: {}", status);
         return;
     }

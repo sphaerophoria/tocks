@@ -116,9 +116,7 @@ impl Storage {
 
         initialize_db(&mut connection)?;
 
-        Ok(Storage {
-            connection,
-        })
+        Ok(Storage { connection })
     }
 
     pub fn open_ram() -> Result<Storage> {
@@ -126,9 +124,7 @@ impl Storage {
             Connection::open_in_memory().context("Failed to open sqlite db in ram")?;
 
         initialize_db(&mut connection)?;
-        Ok(Storage {
-            connection,
-        })
+        Ok(Storage { connection })
     }
 
     pub fn friends(&self) -> Result<Vec<Friend>> {
@@ -212,7 +208,7 @@ impl Storage {
     fn add_user_transaction(
         transaction: &Transaction,
         public_key: &PublicKey,
-        name: &String,
+        name: &str,
     ) -> Result<UserHandle> {
         // Check if user is already in users table
         let user_id = transaction

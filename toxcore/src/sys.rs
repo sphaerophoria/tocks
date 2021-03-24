@@ -7,6 +7,7 @@ use toxcore_sys::*;
 
 #[automock]
 pub trait ToxApi: Send + Sync {
+    #[allow(clippy::new_ret_no_self)]
     unsafe fn new(
         &self,
         options: *const Tox_Options,
@@ -271,6 +272,7 @@ impl ToxApi for ToxApiImpl {
 
 #[automock]
 pub trait ToxOptionsApi {
+    #[allow(clippy::new_ret_no_self)]
     unsafe fn new(&self, err: *mut TOX_ERR_OPTIONS_NEW) -> *mut Tox_Options;
     unsafe fn free(&self, options: *mut Tox_Options);
     unsafe fn set_ipv6_enabled(&self, options: *mut Tox_Options, ipv6_enabled: bool);

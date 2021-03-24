@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 
 use std::{
     collections::HashMap,
+    fmt,
     fs::{self, File},
     io::Read,
     path::PathBuf,
@@ -291,6 +292,12 @@ pub struct AccountId {
 impl AccountId {
     pub fn id(&self) -> i64 {
         self.id
+    }
+}
+
+impl fmt::Display for AccountId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.id)
     }
 }
 

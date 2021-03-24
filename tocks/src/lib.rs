@@ -148,7 +148,7 @@ impl Tocks {
                         );
                     }
                     None => {
-                        //error!("Account {} not present", account_id);
+                        error!("Account {} not present", account_id);
                     }
                 }
             }
