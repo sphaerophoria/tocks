@@ -75,6 +75,7 @@ impl Account {
                     .send(event)
                     .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
             })
+            .log(true)
             .build()?;
 
         let self_public_key = tox.self_public_key();
