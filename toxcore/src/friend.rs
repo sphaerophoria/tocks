@@ -2,7 +2,7 @@ use crate::{FriendData, PublicKey, Status};
 
 use std::{
     hash::{Hash, Hasher},
-    sync::{Arc, RwLock, RwLockReadGuard}
+    sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 /// Information related to a tox friend

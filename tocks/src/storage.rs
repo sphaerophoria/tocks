@@ -92,7 +92,7 @@ impl UserHandle {
 
 pub struct UnsentMessage {
     id: ChatMessageId,
-    message: Message
+    message: Message,
 }
 
 impl UnsentMessage {
@@ -350,10 +350,7 @@ impl Storage {
             .context("Failed to convert messages from DB")?)
     }
 
-    pub fn add_unresolved_message(
-        &mut self,
-        message_id: &ChatMessageId
-    ) -> Result<()> {
+    pub fn add_unresolved_message(&mut self, message_id: &ChatMessageId) -> Result<()> {
         self.connection
             .execute(
                 "INSERT OR REPLACE INTO pending_messages (message_id) VALUES (?1)",
@@ -366,7 +363,7 @@ impl Storage {
     pub fn resolve_message(
         &mut self,
         chat_handle: &ChatHandle,
-        message_id: &ChatMessageId
+        message_id: &ChatMessageId,
     ) -> Result<()> {
         self.connection
             .execute(
@@ -378,30 +375,31 @@ impl Storage {
         Ok(())
     }
 
-    pub fn unresovled_messages(
-        &mut self,
-        chat_handle: &ChatHandle
-    ) -> Result<Vec<UnsentMessage>> {
+    pub fn unresovled_messages(&mut self, chat_handle: &ChatHandle) -> Result<Vec<UnsentMessage>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, text_messages.message, text_messages.action FROM messages JOIN pending_messages ON pending_messages.message_id = messages.id JOIN text_messages ON messages.id = text_messages.message_id WHERE messages.chat_id = ?1")
             .context("Failed to prepare unresolved message query")?;
 
-        let res = statement.query_map(params![chat_handle.chat_id], |row| {
-            let id: i64 = row.get(0)?;
-            let message_str = row.get(1)?;
-            let action = row.get(2)?;
+        let res = statement
+            .query_map(params![chat_handle.chat_id], |row| {
+                let id: i64 = row.get(0)?;
+                let message_str = row.get(1)?;
+                let action = row.get(2)?;
 
-            let message = match action {
-                true => Message::Action(message_str),
-                false => Message::Normal(message_str),
-            };
+                let message = match action {
+                    true => Message::Action(message_str),
+                    false => Message::Normal(message_str),
+                };
 
-            Ok(UnsentMessage { id: ChatMessageId {msg_id: id}, message })
-        })
-        .context("Failed to query unresolved messages")?
-        .into_iter()
-        .map(|item| item.map_err(Error::from))
-        .collect::<Result<Vec<_>>>();
+                Ok(UnsentMessage {
+                    id: ChatMessageId { msg_id: id },
+                    message,
+                })
+            })
+            .context("Failed to query unresolved messages")?
+            .into_iter()
+            .map(|item| item.map_err(Error::from))
+            .collect::<Result<Vec<_>>>();
 
         res
     }

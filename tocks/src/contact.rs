@@ -26,7 +26,7 @@ impl Friend {
             chat_handle,
             public_key,
             name,
-            status
+            status,
         }
     }
 

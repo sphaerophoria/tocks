@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 
 use crate::account::{Account, AccountManager};
 
-use toxcore::{FriendRequest, PublicKey, ToxId, Status};
+use toxcore::{FriendRequest, PublicKey, Status, ToxId};
 
 use lazy_static::lazy_static;
 use log::*;

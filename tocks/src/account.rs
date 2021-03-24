@@ -4,7 +4,7 @@ use crate::{
     Event, TocksEvent, APP_DIRS,
 };
 
-use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Tox, ToxId, Status};
+use toxcore::{Event as CoreEvent, FriendRequest, Message, PublicKey, Receipt, Status, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
@@ -218,9 +218,9 @@ impl Account {
                 .send_message(&tox_friend, chat_log_entry.message())
                 .context("Failed to send message to tox friend")?;
 
-            self.outgoing_messages.insert(receipt, (*chat_handle, *chat_log_entry.id()));
+            self.outgoing_messages
+                .insert(receipt, (*chat_handle, *chat_log_entry.id()));
         }
-
 
         Ok(chat_log_entry)
     }

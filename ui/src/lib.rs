@@ -2,21 +2,21 @@ mod account;
 mod contacts;
 
 use account::Account;
-use contacts::{FriendRequest};
+use contacts::FriendRequest;
 
 use tocks::{
     AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle,
 };
 
-use toxcore::{Message, PublicKey, ToxId, Status};
+use toxcore::{Message, PublicKey, Status, ToxId};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use std::{
-    str::FromStr,
-    collections::HashMap,
-    sync::{Arc, Barrier, RwLock},
     cell::RefCell,
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, Barrier, RwLock},
     thread::JoinHandle,
 };
 
@@ -56,11 +56,7 @@ impl ChatModel {
     }
 
     fn push_message(&mut self, entry: ChatLogEntry) {
-        (self as &dyn QAbstractItemModel).begin_insert_rows(
-            QModelIndex::default(),
-            0,
-            0,
-        );
+        (self as &dyn QAbstractItemModel).begin_insert_rows(QModelIndex::default(), 0, 0);
 
         self.chat_log.push(entry);
 
@@ -78,8 +74,11 @@ impl ChatModel {
 
         self.chat_log[idx].set_complete(true);
 
-
-        let qidx = (self as &dyn QAbstractItemModel).create_index(self.reversed_index(idx as i32) as i32, 0, 0);
+        let qidx = (self as &dyn QAbstractItemModel).create_index(
+            self.reversed_index(idx as i32) as i32,
+            0,
+            0,
+        );
         (self as &dyn QAbstractItemModel).data_changed(qidx, qidx);
     }
 
@@ -125,14 +124,10 @@ impl QAbstractItemModel for ChatModel {
                 } else {
                     QVariant::default()
                 }
-            },
-            Self::SENDER_ID_ROLE => {
-                entry.sender().id().to_qvariant()
-            },
-            Self::COMPLETE_ROLE => {
-                entry.complete().to_qvariant()
             }
-            _ => QVariant::default()
+            Self::SENDER_ID_ROLE => entry.sender().id().to_qvariant(),
+            Self::COMPLETE_ROLE => entry.complete().to_qvariant(),
+            _ => QVariant::default(),
         }
     }
 
@@ -246,21 +241,25 @@ impl QTocks {
         }
     }
 
-    fn account_login(
-        &self,
-        account_id: AccountId,
-        user: UserHandle,
-        address: ToxId,
-        name: String,
-    ) {
+    fn account_login(&self, account_id: AccountId, user: UserHandle, address: ToxId, name: String) {
         let account = Box::new(RefCell::new(Account::new(account_id, user, address, name)));
-        unsafe { QObject::cpp_construct(&account); }
-        self.accounts_storage.write().unwrap().insert(account_id, account);
+        unsafe {
+            QObject::cpp_construct(&account);
+        }
+        self.accounts_storage
+            .write()
+            .unwrap()
+            .insert(account_id, account);
         self.accountsChanged();
     }
 
     fn get_accounts(&self) -> QVariantList {
-        self.accounts_storage.read().unwrap().values().map(|item| unsafe {(&*item.borrow() as &dyn QObject).as_qvariant()} ).collect()
+        self.accounts_storage
+            .read()
+            .unwrap()
+            .values()
+            .map(|item| unsafe { (&*item.borrow() as &dyn QObject).as_qvariant() })
+            .collect()
     }
 
     fn incoming_friend_request(&self, account: AccountId, request: toxcore::FriendRequest) {
@@ -290,7 +289,13 @@ impl QTocks {
                 self.account_login(account_id, user_handle, address, name)
             }
             TocksEvent::FriendAdded(account, friend) => {
-                self.accounts_storage.read().unwrap().get(&account).unwrap().borrow().add_friend(&friend);
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account)
+                    .unwrap()
+                    .borrow()
+                    .add_friend(&friend);
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
                 self.chat_model
@@ -313,7 +318,13 @@ impl QTocks {
                 }
             }
             TocksEvent::FriendStatusChanged(account_id, user_id, status) => {
-                self.accounts_storage.read().unwrap().get(&account_id).unwrap().borrow().set_friend_status(user_id, status);
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account_id)
+                    .unwrap()
+                    .borrow()
+                    .set_friend_status(user_id, status);
             }
         }
     }
@@ -417,4 +428,3 @@ pub(crate) fn status_to_qstring(status: &Status) -> QString {
         Status::Offline => "offline".into(),
     }
 }
-

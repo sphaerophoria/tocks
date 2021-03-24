@@ -16,7 +16,7 @@ pub struct Friend {
     name: qt_property!(QString; NOTIFY nameChanged),
     nameChanged: qt_signal!(),
     status: qt_property!(QString; NOTIFY statusChanged),
-    statusChanged: qt_signal!()
+    statusChanged: qt_signal!(),
 }
 
 impl Friend {

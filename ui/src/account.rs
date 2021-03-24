@@ -1,10 +1,10 @@
 use crate::contacts::Friend;
 
-use tocks::{AccountId, UserHandle};
-use toxcore::{ToxId, Status};
 use qmetaobject::*;
+use tocks::{AccountId, UserHandle};
+use toxcore::{Status, ToxId};
 
-use std::{sync::Mutex, collections::HashMap, cell::RefCell};
+use std::{cell::RefCell, collections::HashMap, sync::Mutex};
 
 #[derive(QObject, Default)]
 #[allow(non_snake_case)]
@@ -23,7 +23,6 @@ pub struct Account {
 
 impl Account {
     pub fn new(id: AccountId, user: UserHandle, address: ToxId, name: String) -> Account {
-
         Account {
             base: Default::default(),
             id: id.id(),
@@ -41,16 +40,23 @@ impl Account {
     pub fn add_friend(&self, friend: &tocks::Friend) {
         let id = *friend.id();
         let friend = Box::new(RefCell::new(Friend::from(friend)));
-        unsafe {QObject::cpp_construct(&friend)};
+        unsafe { QObject::cpp_construct(&friend) };
         self.friends_storage.lock().unwrap().insert(id, friend);
         self.friendsChanged()
     }
 
     pub fn get_friends(&self) -> QVariantList {
-        self.friends_storage.lock().unwrap().values().map(|item| unsafe {(&*item.borrow_mut() as &dyn QObject).as_qvariant()} ).collect()
+        self.friends_storage
+            .lock()
+            .unwrap()
+            .values()
+            .map(|item| unsafe { (&*item.borrow_mut() as &dyn QObject).as_qvariant() })
+            .collect()
     }
 
     pub fn set_friend_status(&self, user_id: UserHandle, status: Status) {
-        self.friends_storage.lock().unwrap()[&user_id].borrow_mut().set_status(status);
+        self.friends_storage.lock().unwrap()[&user_id]
+            .borrow_mut()
+            .set_status(status);
     }
 }

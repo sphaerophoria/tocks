@@ -64,13 +64,13 @@ pub trait ToxApi: Send + Sync {
         &self,
         tox: *const toxcore_sys::Tox,
         friend_number: u32,
-        error: *mut TOX_ERR_FRIEND_QUERY
+        error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> TOX_USER_STATUS;
     unsafe fn friend_get_connection_status(
         &self,
         tox: *const toxcore_sys::Tox,
         friend_number: u32,
-        error: *mut TOX_ERR_FRIEND_QUERY
+        error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> TOX_CONNECTION;
     unsafe fn callback_friend_request(
         &self,
@@ -90,11 +90,13 @@ pub trait ToxApi: Send + Sync {
     unsafe fn callback_friend_status(
         &self,
         tox: *mut toxcore_sys::Tox,
-        callback: tox_friend_status_cb);
+        callback: tox_friend_status_cb,
+    );
     unsafe fn callback_friend_connection_status(
         &self,
         tox: *mut toxcore_sys::Tox,
-        callback: tox_friend_connection_status_cb);
+        callback: tox_friend_connection_status_cb,
+    );
 }
 
 pub(crate) struct ToxApiImpl;
@@ -212,7 +214,7 @@ impl ToxApi for ToxApiImpl {
         &self,
         tox: *const toxcore_sys::Tox,
         friend_number: u32,
-        error: *mut TOX_ERR_FRIEND_QUERY
+        error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> TOX_USER_STATUS {
         tox_friend_get_status(tox, friend_number, error)
     }
@@ -221,7 +223,7 @@ impl ToxApi for ToxApiImpl {
         &self,
         tox: *const toxcore_sys::Tox,
         friend_number: u32,
-        error: *mut TOX_ERR_FRIEND_QUERY
+        error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> TOX_CONNECTION {
         tox_friend_get_connection_status(tox, friend_number, error)
     }
@@ -253,7 +255,7 @@ impl ToxApi for ToxApiImpl {
     unsafe fn callback_friend_status(
         &self,
         tox: *mut toxcore_sys::Tox,
-        callback: tox_friend_status_cb
+        callback: tox_friend_status_cb,
     ) {
         tox_callback_friend_status(tox, callback)
     }
@@ -261,11 +263,10 @@ impl ToxApi for ToxApiImpl {
     unsafe fn callback_friend_connection_status(
         &self,
         tox: *mut toxcore_sys::Tox,
-        callback: tox_friend_connection_status_cb
+        callback: tox_friend_connection_status_cb,
     ) {
         tox_callback_friend_connection_status(tox, callback)
     }
-
 }
 
 #[automock]
