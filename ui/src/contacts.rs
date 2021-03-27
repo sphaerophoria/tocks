@@ -1,7 +1,7 @@
 use crate::status_to_qstring;
 
 use qmetaobject::*;
-use tocks::Friend as TocksFriend;
+use tocks::{Friend as TocksFriend, Status};
 
 #[allow(non_snake_case)]
 #[derive(QObject, Default)]
@@ -20,7 +20,7 @@ pub struct Friend {
 }
 
 impl Friend {
-    pub fn set_status(&mut self, status: toxcore::Status) {
+    pub fn set_status(&mut self, status: Status) {
         self.status = status_to_qstring(&status);
         self.statusChanged();
     }
@@ -42,10 +42,4 @@ impl From<&TocksFriend> for Friend {
             statusChanged: Default::default(),
         }
     }
-}
-
-#[derive(QGadget, Clone, Default)]
-pub struct FriendRequest {
-    pub sender: qt_property!(QString),
-    pub message: qt_property!(QString),
 }

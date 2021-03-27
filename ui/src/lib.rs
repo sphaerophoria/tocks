@@ -2,20 +2,18 @@ mod account;
 mod contacts;
 
 use account::Account;
-use contacts::FriendRequest;
 
 use tocks::{
-    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle,
+    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle, Status
 };
 
-use toxcore::{Message, PublicKey, Status, ToxId};
+use toxcore::{Message, ToxId};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use std::{
     cell::RefCell,
     collections::HashMap,
-    str::FromStr,
     sync::{Arc, Barrier, RwLock},
     thread::JoinHandle,
 };
@@ -152,7 +150,7 @@ struct QTocks {
     offlineAccountsChanged: qt_signal!(),
     newAccount: qt_method!(fn(&self, name: QString, password: QString)),
     close: qt_method!(fn(&self)),
-    addFriendByPublicKey: qt_method!(fn(&self, account: i64, friend: QString)),
+    addPendingFriend: qt_method!(fn(&self, account: i64, user: i64)),
     login: qt_method!(fn(&self, account_name: QString, password: QString)),
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
@@ -178,7 +176,7 @@ impl QTocks {
             offlineAccountsChanged: Default::default(),
             newAccount: Default::default(),
             close: Default::default(),
-            addFriendByPublicKey: Default::default(),
+            addPendingFriend: Default::default(),
             login: Default::default(),
             sendMessage: Default::default(),
             updateChatModel: Default::default(),
@@ -196,11 +194,10 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn addFriendByPublicKey(&self, account: i64, friend: QString) {
-        let friend_public_key = PublicKey::from_str(&friend.to_string()).unwrap();
-        self.send_ui_request(TocksUiEvent::AddFriendByPublicKey(
+    fn addPendingFriend(&self, account: i64, friend: i64) {
+        self.send_ui_request(TocksUiEvent::AcceptPendingFriend(
             AccountId::from(account),
-            friend_public_key,
+            UserHandle::from(friend),
         ));
     }
 
@@ -283,18 +280,6 @@ impl QTocks {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
             TocksEvent::Error(e) => self.error(e.into()),
-            TocksEvent::FriendRequestReceived(account, request) => {
-                self.accounts_storage
-                    .read()
-                    .unwrap()
-                    .get(&account)
-                    .unwrap()
-                    .borrow()
-                    .push_friend_request(FriendRequest {
-                        sender: request.public_key.to_string().into(),
-                        message: request.message.into(),
-                    });
-            }
             TocksEvent::AccountLoggedIn(account_id, user_handle, address, name) => {
                 self.account_login(account_id, user_handle, address, name)
             }
@@ -389,8 +374,6 @@ impl QmlUi {
             let qtocks = QObjectBox::new(QTocks::new(ui_event_tx, tocks_event_rx));
             let qtocks_pinned = qtocks.pinned();
 
-            contacts::FriendRequest::register(None);
-
             let mut engine = QmlEngine::new();
 
             engine.set_object_property("tocks".into(), qtocks_pinned);
@@ -436,5 +419,6 @@ pub(crate) fn status_to_qstring(status: &Status) -> QString {
         Status::Away => "away".into(),
         Status::Busy => "busy".into(),
         Status::Offline => "offline".into(),
+        Status::Pending => "pending".into(),
     }
 }

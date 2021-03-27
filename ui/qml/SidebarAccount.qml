@@ -17,7 +17,7 @@ Item {
         friendsList.clearSelection()
     }
 
-    height: accountRow.height + friendsList.height + friendRequests.height
+    height: accountRow.height + friendsList.height
 
     Column {
         anchors.fill: parent

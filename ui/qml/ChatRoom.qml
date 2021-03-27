@@ -48,33 +48,58 @@ Rectangle {
 
             Layout.minimumHeight: 100
 
-            TextArea {
-                id: messageText
-
+            GridLayout {
                 anchors.fill: parent
+                columns: 2
+                columnSpacing: 0
+                rowSpacing: 0
 
-                horizontalAlignment: TextEdit.AlignLeft
-                placeholderText: "Type message..."
-                wrapMode: TextEdit.Wrap
+                TextArea {
+                    id: messageText
 
-                function handleReturn(event) {
-                    if ((event.modifiers & Qt.ShiftModifier)) {
+                    Layout.rowSpan: 2
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 100
+
+                    horizontalAlignment: TextEdit.AlignLeft
+                    placeholderText: "Type message..."
+                    wrapMode: TextEdit.Wrap
+
+                    function handleReturn(event) {
+                        if ((event.modifiers & Qt.ShiftModifier)) {
                         event.accepted = false
                         return
+                        }
+                        tocks.sendMessage(account.id, friend.chatId, text)
+                        text = ""
                     }
-                    tocks.sendMessage(account.id, friend.chatId, text)
-                    text = ""
+
+                    Keys.onReturnPressed: {
+                        handleReturn(event)
+                    }
+
+                    Keys.onEnterPressed: {
+                        handleReturn(event)
+                    }
                 }
 
-                Keys.onReturnPressed: {
-                    handleReturn(event)
+                TocksButton {
+                    visible: friend.status == "pending"
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 60
+                    text: "Accept"
+                    onClicked: {
+                        tocks.addPendingFriend(account.id, friend.userId)
+                    }
                 }
 
-                Keys.onEnterPressed: {
-                    handleReturn(event)
+                TocksButton {
+                    visible: friend.status == "pending"
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 60
+                    text: "Reject"
                 }
             }
         }
-
     }
 }

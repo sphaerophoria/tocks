@@ -9,7 +9,7 @@ mod savemanager;
 
 pub use crate::{
     account::AccountId,
-    contact::Friend,
+    contact::{Friend, Status},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 
 use crate::account::{Account, AccountManager};
 
-use toxcore::{FriendRequest, PublicKey, Status, ToxId};
+use toxcore::ToxId;
 
 use lazy_static::lazy_static;
 use log::*;
@@ -32,7 +32,7 @@ lazy_static! {
 pub enum TocksUiEvent {
     Close,
     CreateAccount(String /*name*/, String /*password*/),
-    AddFriendByPublicKey(AccountId, PublicKey /*friend address*/),
+    AcceptPendingFriend(AccountId, UserHandle),
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
@@ -43,7 +43,6 @@ pub enum TocksEvent {
     Error(String),
     AccountListLoaded(Vec<String>),
     AccountLoggedIn(AccountId, UserHandle, ToxId, String),
-    FriendRequestReceived(AccountId, FriendRequest),
     FriendAdded(AccountId, Friend),
     MessagesLoaded(AccountId, ChatHandle, Vec<ChatLogEntry>),
     MessageInserted(AccountId, ChatHandle, ChatLogEntry),
@@ -115,9 +114,10 @@ impl Tocks {
                 return Ok(true);
             }
             TocksUiEvent::CreateAccount(name, password) => {
-                let account = Account::from_account_name(name, password).context("Failed to create account")?;
+                let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
+                let account = Account::from_account_name(name, password, account_event_tx).context("Failed to create account")?;
 
-                let account_id = self.account_manager.add_account(account);
+                let account_id = self.account_manager.add_account(account, account_event_rx);
                 let account = self.account_manager.get(&account_id).unwrap();
 
                 Self::send_tocks_event(
@@ -130,13 +130,13 @@ impl Tocks {
                     ),
                 );
             }
-            TocksUiEvent::AddFriendByPublicKey(account_id, friend_address) => {
+            TocksUiEvent::AcceptPendingFriend(account_id, user_handle) => {
                 let account = self.account_manager.get_mut(&account_id);
 
                 match account {
                     Some(account) => {
                         let friend = account
-                            .add_friend_publickey(&friend_address)
+                            .add_pending_friend(&user_handle)
                             .context("Failed to add tox friend by public key")?;
 
                         Self::send_tocks_event(
@@ -150,10 +150,11 @@ impl Tocks {
                 }
             }
             TocksUiEvent::Login(account_name, password) => {
-                let account = Account::from_account_name(account_name.clone(), password)
+                let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
+                let account = Account::from_account_name(account_name.clone(), password, account_event_tx)
                     .with_context(|| format!("Failed to create account {}", account_name))?;
 
-                let account_id = self.account_manager.add_account(account);
+                let account_id = self.account_manager.add_account(account, account_event_rx);
                 let account = self.account_manager.get(&account_id).unwrap();
 
                 let user_handle = account.user_handle();

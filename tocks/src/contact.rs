@@ -1,7 +1,27 @@
 use crate::storage::{ChatHandle, UserHandle};
 
 use std::collections::HashMap;
-use toxcore::{Friend as ToxFriend, PublicKey, Status};
+use toxcore::{Friend as ToxFriend, PublicKey, Status as ToxStatus};
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Status {
+    Online,
+    Away,
+    Busy,
+    Offline,
+    Pending,
+}
+
+impl From<ToxStatus> for Status {
+    fn from(status: ToxStatus) -> Status {
+        match status {
+            ToxStatus::Online => Status::Online,
+            ToxStatus::Away => Status::Away,
+            ToxStatus::Busy => Status::Busy,
+            ToxStatus::Offline => Status::Offline,
+        }
+    }
+}
 
 /// Data associated with a tox friend
 #[derive(Clone, Debug)]
@@ -58,12 +78,18 @@ impl Friend {
 pub type Friends = HashMap<UserHandle, Friend>;
 pub type ToxFriends = HashMap<ChatHandle, toxcore::Friend>;
 
+pub struct FriendBundle {
+    pub friend: Friend,
+    pub tox_friend: Option<toxcore::Friend>,
+}
+
 #[derive(Default)]
 pub(crate) struct UserManager {
     // Map chat handle, user handle, public
     chat_mapping: HashMap<ChatHandle, usize>,
+    user_mapping: HashMap<UserHandle, usize>,
     pk_mapping: HashMap<PublicKey, usize>,
-    friends: Vec<(Friend, toxcore::Friend)>,
+    friends: Vec<FriendBundle>,
 }
 
 impl UserManager {
@@ -71,29 +97,45 @@ impl UserManager {
         Default::default()
     }
 
-    pub fn add_friend(&mut self, friend: Friend, tox_friend: ToxFriend) -> (&Friend, &ToxFriend) {
+    pub fn add_friend(&mut self, friend: Friend, tox_friend: ToxFriend) -> &FriendBundle {
         assert!(*friend.public_key() == tox_friend.public_key());
+
+        let tox_friend = Some(tox_friend);
 
         let idx = self.friends.len();
 
         self.chat_mapping.insert(*friend.chat_handle(), idx);
+        self.user_mapping.insert(*friend.id(), idx);
         self.pk_mapping.insert(friend.public_key().clone(), idx);
-        self.friends.push((friend, tox_friend));
+        self.friends.push(FriendBundle { friend, tox_friend });
 
-        let last = self.friends.last().unwrap();
-
-        (&last.0, &last.1)
+        self.friends.last().unwrap()
     }
 
-    pub fn tox_friend_by_chat_handle(&self, handle: &ChatHandle) -> &ToxFriend {
-        &self.friends[self.chat_mapping[handle]].1
+    pub fn add_pending_friend(&mut self, friend: Friend) -> &Friend {
+        let idx = self.friends.len();
+
+        self.chat_mapping.insert(*friend.chat_handle(), idx);
+        self.user_mapping.insert(*friend.id(), idx);
+        self.pk_mapping.insert(friend.public_key().clone(), idx);
+        self.friends.push(FriendBundle { friend, tox_friend: None });
+
+        &self.friends.last().unwrap().friend
+    }
+
+    pub fn friend_by_chat_handle(&self, handle: &ChatHandle) -> &FriendBundle {
+        &self.friends[self.chat_mapping[handle]]
     }
 
     pub fn friend_by_public_key(&mut self, key: &PublicKey) -> &mut Friend {
-        &mut self.friends[self.pk_mapping[key]].0
+        &mut self.friends[self.pk_mapping[key]].friend
+    }
+
+    pub fn friend_by_user_handle(&mut self, handle: &UserHandle) -> &mut FriendBundle {
+        &mut self.friends[self.user_mapping[handle]]
     }
 
     pub fn friends(&self) -> impl Iterator<Item = &Friend> {
-        self.friends.iter().map(|item| &item.0)
+        self.friends.iter().map(|item| &item.friend)
     }
 }

@@ -1,6 +1,6 @@
-use crate::contact::Friend;
+use crate::contact::{Friend, Status};
 
-use toxcore::{Message, PublicKey, Status};
+use toxcore::{Message, PublicKey};
 
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
@@ -9,7 +9,7 @@ use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transacti
 use std::{fmt, path::Path};
 
 // Wrapper around sqlite message table id
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
 pub struct ChatMessageId {
     msg_id: i64,
 }
@@ -22,6 +22,7 @@ impl fmt::Display for ChatMessageId {
 
 // NOTE: This is written to the DB, so if the meanings of these values are
 // changed you may have data consistency issues
+#[derive(Debug)]
 pub struct ChatLogEntry {
     id: ChatMessageId,
     sender: UserHandle,
@@ -90,6 +91,12 @@ impl UserHandle {
     }
 }
 
+impl From<i64> for UserHandle {
+    fn from(id: i64) -> Self {
+        Self { user_id: id }
+    }
+}
+
 pub struct UnsentMessage {
     id: ChatMessageId,
     message: Message,
@@ -131,8 +138,10 @@ impl Storage {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT chat_id, user_id, users.public_key, users.name \
-                FROM friends LEFT JOIN users ON user_id = users.id",
+                "SELECT chat_id, friends.user_id, users.public_key, users.name, pending_friends.id \
+                FROM friends \
+                LEFT JOIN users ON friends.user_id = users.id \
+                LEFT JOIN pending_friends ON friends.user_id = pending_friends.user_id",
             )
             .context("Failed to prepare statement to retrieve friends from DB")?;
 
@@ -147,20 +156,24 @@ impl Storage {
                 let public_key_bytes: Vec<u8> = row.get(2)?;
                 let name: String = row.get(3)?;
 
-                Ok((chat_handle, user_handle, public_key_bytes, name))
+                let pending: bool = row.get_raw(4) != ValueRef::Null;
+
+
+                Ok((chat_handle, user_handle, public_key_bytes, name, pending))
             })
             .context("Failed to map friend list response")?;
 
         query_results
             .into_iter()
             .filter_map(std::result::Result::ok)
-            .map(|(chat_handle, user_handle, public_key_bytes, name)| {
+            .map(|(chat_handle, user_handle, public_key_bytes, name, pending)| {
+                let status = if pending { Status::Pending } else { Status::Offline };
                 Ok(Friend::new(
                     user_handle,
                     chat_handle,
                     PublicKey::from_bytes(public_key_bytes)?,
                     name,
-                    Status::Offline,
+                    status,
                 ))
             })
             .collect::<Result<Vec<Friend>>>()
@@ -169,6 +182,35 @@ impl Storage {
 
     pub fn add_friend(&mut self, public_key: PublicKey, name: String) -> Result<Friend> {
         let transaction = self.connection.transaction()?;
+
+        let friend = Self::add_friend_transaction(&transaction, public_key, name)?;
+
+        transaction.commit()?;
+
+        Ok(friend)
+    }
+
+    pub fn add_pending_friend(&mut self, public_key: PublicKey) -> Result<Friend> {
+        let transaction = self.connection.transaction()?;
+
+        let name = public_key.to_string();
+        let mut friend = Self::add_friend_transaction(&transaction, public_key, name)?;
+
+        transaction.execute("INSERT INTO pending_friends (user_id) VALUES (?1)", params![friend.id().id()])
+            .context("Failed to insert into pending friend")?;
+
+        transaction.commit()?;
+
+        friend.set_status(Status::Pending);
+
+        Ok(friend)
+    }
+
+    fn add_friend_transaction(
+        transaction: &Transaction,
+        public_key: PublicKey,
+        name: String
+    ) -> Result<Friend> {
 
         let user_id = Self::add_user_transaction(&transaction, &public_key, &name)?;
 
@@ -186,8 +228,6 @@ impl Storage {
             .context("Failed to add friend to DB")?;
 
         let chat_id = transaction.last_insert_rowid();
-
-        transaction.commit()?;
 
         Ok(Friend::new(
             user_id,
@@ -245,6 +285,13 @@ impl Storage {
         };
 
         Ok(UserHandle { user_id })
+    }
+
+    pub fn resolve_pending_friend_request(&mut self, user_handle: &UserHandle) -> Result<()> {
+        self.connection.execute("DELETE FROM pending_friends WHERE user_id = ?1", params![user_handle.id()])
+            .context("Failed to remove user from pending friends table")?;
+
+        Ok(())
     }
 
     pub fn push_message(
@@ -485,6 +532,16 @@ fn initialize_db(connection: &mut Connection) -> Result<()> {
             NO_PARAMS,
         )
         .context("Failed to create pending_messages table")?;
+
+    transaction
+        .execute(
+            "CREATE TABLE IF NOT EXISTS pending_friends (\
+            id INTEGER PRIMARY KEY, \
+            user_id INTEGER NOT NULL, \
+            FOREIGN KEY (user_id) REFERENCES users(id))",
+            NO_PARAMS,
+        )
+        .context("Failed to create pending_friends table")?;
 
     transaction
         .commit()
