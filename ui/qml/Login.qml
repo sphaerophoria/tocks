@@ -10,6 +10,14 @@ RowLayout {
 
     width: 200
 
+    function login() {
+        if (comboBox.currentIndex != 0) {
+            tocks.login(comboBox.currentText, password.text)
+        } else {
+            tocks.newAccount(name.text, password.text)
+        }
+    }
+
     ColumnLayout {
         Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
 
@@ -57,6 +65,8 @@ RowLayout {
             width: parent.width
             echoMode: TextField.Password
             placeholderText: qsTr("Password")
+
+            onAccepted: login()
         }
 
         TocksButton {
@@ -64,13 +74,7 @@ RowLayout {
             Layout.fillWidth: true
             text: qsTr("Login")
 
-            onClicked: {
-                if (comboBox.currentIndex != 0) {
-                    tocks.login(comboBox.currentText, password.text)
-                } else {
-                    tocks.newAccount(name.text, password.text)
-                }
-            }
+            onClicked:  login()
         }
     }
 }
