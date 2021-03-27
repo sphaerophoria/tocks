@@ -5,9 +5,10 @@ use crate::{
     Event, TocksEvent, APP_DIRS,
 };
 
+use mpsc::UnboundedReceiver;
 use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStatus, Tox, ToxId};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
@@ -48,35 +49,9 @@ impl Account {
         password: String,
         account_event_tx: mpsc::UnboundedSender<AccountEvent>,
     ) -> Result<Account> {
-        let mut account_file = account_name.clone();
-        account_file.push_str(".tox");
-        let account_file_path = TOX_SAVE_DIR.join(account_file);
 
-        let save_manager = if password.is_empty() {
-            SaveManager::new_unencrypted(account_file_path)
-        } else {
-            SaveManager::new_with_password(account_file_path, &password)
-                .context("Failed to create save manager")?
-        };
-
-        let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
-
-        let builder = Tox::builder()?;
-
-        let savedata = save_manager.load();
-        let builder = match savedata {
-            Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
-            _ => builder,
-        };
-
-        let mut tox = builder
-            .event_callback(move |event| {
-                toxcore_callback_tx
-                    .send(event)
-                    .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
-            })
-            .log(true)
-            .build()?;
+        let save_manager = create_save_manager(account_name.clone(), &password)?;
+        let (mut tox, toxcore_callback_rx) = create_tox(save_manager.load())?;
 
         let self_public_key = tox.self_public_key();
         let tox_id = tox.self_address();
@@ -88,68 +63,17 @@ impl Account {
             name = tox.self_name();
         }
 
-        let db_name = format!("{}.db", name);
-        let storage = Storage::open(
-            APP_DIRS.data_dir.join(&db_name),
-            &tox.self_public_key(),
-            &tox.self_name(),
-        );
+        let mut storage = create_storage(&account_name, &tox.self_public_key(), &tox.self_name())?;
 
-        let mut storage = match storage {
-            Ok(s) => s,
-            Err(e) => {
-                error!("Failed to open storage: {}", e);
-                Storage::open_ram(&tox.self_public_key(), &tox.self_name())?
-            }
-        };
-
-        let self_user_handle = storage.self_user_handle();
-
-        let mut friends = storage
-            .friends()?
-            .into_iter()
-            .map(|friend| (friend.public_key().clone(), friend))
-            .collect::<HashMap<_, _>>();
-
-        let tox_friends = tox.friends().context("Failed to initialize tox friends")?;
 
         let mut user_manager = UserManager::new();
 
-        for tox_friend in tox_friends {
-            let mut friend = match friends.remove(&tox_friend.public_key()) {
-                Some(f) => f,
-                None => storage
-                    .add_friend(tox_friend.public_key(), tox_friend.name())
-                    .context("Failed to add friend to storage")?,
-            };
+        initialize_friend_lists(&mut storage, &mut tox, &mut user_manager)?;
 
-            if *friend.status() == Status::Pending {
-                friend.set_status(Status::Offline);
-                storage
-                    .resolve_pending_friend_request(friend.id())
-                    .context("Failed to remove pending friend request from storage")?;
-            }
+        // After initializing our friends list our toxcore state could have changed
+        save_manager.save(&tox.get_savedata())?;
 
-            user_manager.add_friend(friend, tox_friend);
-        }
-
-        // Remaining friends need to be added. Assume we've already sent a
-        // friend request in the past. Even if we wanted to send again, we don't
-        // have the toxid to back it up
-        for (_, friend) in friends {
-            if *friend.status() != Status::Pending {
-                let tox_friend = tox
-                    .add_friend_norequest(friend.public_key())
-                    .context("Failed to add missing tox friend")?;
-
-                user_manager.add_friend(friend, tox_friend);
-            } else {
-                user_manager.add_pending_friend(friend);
-            }
-        }
-
-        let savedata = tox.get_savedata();
-        save_manager.save(&savedata)?;
+        let self_user_handle = storage.self_user_handle();
 
         Ok(Account {
             tox,
@@ -504,4 +428,120 @@ pub fn retrieve_account_list() -> Result<Vec<String>> {
     accounts.sort();
 
     Ok(accounts)
+}
+
+fn create_save_manager(account_name: String, password: &str)  -> Result<SaveManager> {
+    let mut account_file = account_name.clone();
+    account_file.push_str(".tox");
+    let account_file_path = TOX_SAVE_DIR.join(account_file);
+
+    let save_manager = if password.is_empty() {
+        SaveManager::new_unencrypted(account_file_path)
+    } else {
+        SaveManager::new_with_password(account_file_path, password)
+            .context("Failed to create save manager")?
+    };
+
+    Ok(save_manager)
+}
+
+fn create_tox(savedata: Result<Vec<u8>>) -> Result<(Tox, mpsc::UnboundedReceiver<toxcore::Event>), Error> {
+    let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
+
+    let builder = Tox::builder()?;
+
+    let builder = match savedata {
+        Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
+        _ => builder,
+    };
+
+    let tox = builder
+        .event_callback(move |event| {
+            toxcore_callback_tx
+                .send(event)
+                .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
+        })
+        .log(true)
+        .build()?;
+
+
+    Ok((tox, toxcore_callback_rx))
+}
+
+fn create_storage(account_name: &str, self_pk: &PublicKey, current_name: &str) -> Result<Storage> {
+    let db_name = format!("{}.db", account_name);
+    let storage = Storage::open(
+        APP_DIRS.data_dir.join(&db_name),
+        self_pk,
+        current_name,
+    );
+
+    let storage = match storage {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to open storage: {}", e);
+            Storage::open_ram(self_pk, current_name)
+                .context("Failed to open ram DB")?
+        }
+    };
+
+    Ok(storage)
+}
+
+/// Initialize friend lists ensuring consistency between DB state and toxcore
+/// state.
+///
+/// The goals here are as follows
+///    1. Ensure all existing tox friends are in our DB
+///        * This is likely to get out of sync when users use multiple tox clients
+///    2. Ensure any friends the DB thinks we should have are in toxcore
+///    3. Add all friends to our runtime UserManager
+///
+/// Note that this falls over if a user switches to another tox client and
+/// removes a friend. That friend will be re-added because we do not know
+/// if we failed to add the friend to toxcore in a previous tocks run or if
+/// the user intentionally removed the friend from another tox client
+fn initialize_friend_lists(storage: &mut Storage, tox: &mut Tox, user_manager: &mut UserManager) -> Result<()> {
+    let mut friends = storage
+        .friends()?
+        .into_iter()
+        .map(|friend| (friend.public_key().clone(), friend))
+        .collect::<HashMap<_, _>>();
+
+    let tox_friends = tox.friends().context("Failed to initialize tox friends")?;
+
+    for tox_friend in tox_friends {
+        let mut friend = match friends.remove(&tox_friend.public_key()) {
+            Some(f) => f,
+            None => storage
+                .add_friend(tox_friend.public_key(), tox_friend.name())
+                .context("Failed to add friend to storage")?,
+        };
+
+        if *friend.status() == Status::Pending {
+            friend.set_status(Status::Offline);
+            storage
+                .resolve_pending_friend_request(friend.id())
+                .context("Failed to remove pending friend request from storage")?;
+        }
+
+        user_manager.add_friend(friend, tox_friend);
+    }
+
+    // Remaining friends need to be added. Assume we've already sent a
+    // friend request in the past. Even if we wanted to send again, we don't
+    // have the toxid to back it up
+    for (_, friend) in friends {
+        if *friend.status() != Status::Pending {
+            let tox_friend = tox
+                .add_friend_norequest(friend.public_key())
+                .context("Failed to add missing tox friend")?;
+
+            user_manager.add_friend(friend, tox_friend);
+        } else {
+            user_manager.add_pending_friend(friend);
+        }
+    }
+
+    Ok(())
 }
