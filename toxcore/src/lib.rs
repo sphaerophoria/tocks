@@ -11,7 +11,7 @@ mod friend;
 mod sys;
 mod tox;
 
-pub use crate::{builder::ToxBuilder, friend::Friend, tox::Tox, encryption::PassKey};
+pub use crate::{builder::ToxBuilder, encryption::PassKey, friend::Friend, tox::Tox};
 use error::*;
 
 use toxcore_sys::{TOX_PUBLIC_KEY_SIZE, TOX_SECRET_KEY_SIZE};

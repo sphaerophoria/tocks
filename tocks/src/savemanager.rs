@@ -3,20 +3,22 @@ use toxcore::PassKey;
 use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
 
-use std::{fs::OpenOptions, io::{Read, Write}, path::{Path, PathBuf}};
+use std::{
+    fs::OpenOptions,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
-pub struct SaveManager
-{
+pub struct SaveManager {
     path: PathBuf,
-    passkey: Option<PassKey>
+    passkey: Option<PassKey>,
 }
 
-impl SaveManager
-{
+impl SaveManager {
     pub fn new_unencrypted(path: PathBuf) -> SaveManager {
         SaveManager {
             path,
-            passkey: None
+            passkey: None,
         }
     }
 
@@ -50,18 +52,21 @@ impl SaveManager
             .context("Failed to open temporary file for writing")?;
 
         match &self.passkey {
-            Some(key) =>  {
+            Some(key) => {
                 let encrypted = key.encrypt(data).context("Failed to encrypted tox save")?;
-                tempfile.write(&encrypted)
+                tempfile
+                    .write(&encrypted)
                     .context("Failed to write encrypted tox save to temp file")?;
-            },
+            }
             None => {
-                tempfile.write(data)
+                tempfile
+                    .write(data)
                     .context("Failed to write unencrypted tox save to temp file")?;
             }
         }
 
-        tempfile.persist(&self.path)
+        tempfile
+            .persist(&self.path)
             .context("Failed to overwrite save")?;
 
         Ok(())
@@ -81,4 +86,3 @@ fn path_to_buf<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
 
     Ok(buf)
 }
-

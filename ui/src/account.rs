@@ -1,7 +1,7 @@
 use crate::contacts::Friend;
 
 use qmetaobject::*;
-use tocks::{AccountId, UserHandle, Status};
+use tocks::{AccountId, Status, UserHandle};
 use toxcore::ToxId;
 
 use std::{cell::RefCell, collections::HashMap, sync::Mutex};
@@ -64,4 +64,3 @@ impl Account {
             .set_status(status);
     }
 }
-

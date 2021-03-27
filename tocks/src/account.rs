@@ -1,7 +1,7 @@
 use crate::{
-    contact::{Friend, UserManager, Status},
-    storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
+    contact::{Friend, Status, UserManager},
     savemanager::SaveManager,
+    storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
     Event, TocksEvent, APP_DIRS,
 };
 
@@ -14,12 +14,7 @@ use log::*;
 use platform_dirs::AppDirs;
 use tokio::sync::mpsc;
 
-use std::{
-    collections::HashMap,
-    fmt,
-    fs,
-    path::PathBuf,
-};
+use std::{collections::HashMap, fmt, fs, path::PathBuf};
 
 lazy_static! {
     pub static ref TOX_SAVE_DIR: PathBuf = AppDirs::new(Some("tox"), false).unwrap().config_dir;
@@ -48,7 +43,11 @@ pub(crate) struct Account {
 }
 
 impl Account {
-    pub fn from_account_name(account_name: String, password: String, account_event_tx: mpsc::UnboundedSender<AccountEvent>) -> Result<Account> {
+    pub fn from_account_name(
+        account_name: String,
+        password: String,
+        account_event_tx: mpsc::UnboundedSender<AccountEvent>,
+    ) -> Result<Account> {
         let mut account_file = account_name.clone();
         account_file.push_str(".tox");
         let account_file_path = TOX_SAVE_DIR.join(account_file);
@@ -67,10 +66,10 @@ impl Account {
         let savedata = save_manager.load();
         let builder = match savedata {
             Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
-            _ => builder
+            _ => builder,
         };
 
-        let mut tox  = builder
+        let mut tox = builder
             .event_callback(move |event| {
                 toxcore_callback_tx
                     .send(event)
@@ -124,7 +123,8 @@ impl Account {
 
             if *friend.status() == Status::Pending {
                 friend.set_status(Status::Offline);
-                storage.resolve_pending_friend_request(friend.id())
+                storage
+                    .resolve_pending_friend_request(friend.id())
                     .context("Failed to remove pending friend request from storage")?;
             }
 
@@ -189,17 +189,20 @@ impl Account {
         let bundle = self.user_manager.friend_by_user_handle(&friend_id);
         let friend = &mut bundle.friend;
 
-        bundle.tox_friend = Some(self
-            .tox
-            .add_friend_norequest(friend.public_key())
-            .context("Failed to add friend by public key")?);
+        bundle.tox_friend = Some(
+            self.tox
+                .add_friend_norequest(friend.public_key())
+                .context("Failed to add friend by public key")?,
+        );
 
         friend.set_status(Status::Offline);
 
-        self.storage.resolve_pending_friend_request(friend_id)
+        self.storage
+            .resolve_pending_friend_request(friend_id)
             .context("Failed to save pending friend state to DB")?;
 
-        self.save_manager.save(&self.tox.get_savedata())
+        self.save_manager
+            .save(&self.tox.get_savedata())
             .context("Failed to save tox data after adding friend")?;
 
         Ok(friend)
@@ -212,7 +215,11 @@ impl Account {
     ) -> Result<ChatLogEntry> {
         let message = Message::Normal(message);
 
-        let tox_friend = self.user_manager.friend_by_chat_handle(&chat_handle).tox_friend.as_ref();
+        let tox_friend = self
+            .user_manager
+            .friend_by_chat_handle(&chat_handle)
+            .tox_friend
+            .as_ref();
 
         if tox_friend.is_none() {
             return Err(anyhow!("Cannot send message to unaccepted friend"));
@@ -254,51 +261,85 @@ impl Account {
     fn handle_toxcore_event(&mut self, event: CoreEvent) -> Result<()> {
         match event {
             CoreEvent::MessageReceived(tox_friend, message) => {
-                let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
-                let chat_log_entry = self.storage.push_message(friend.chat_handle(), *friend.id(), message)
+                let friend = self
+                    .user_manager
+                    .friend_by_public_key(&tox_friend.public_key());
+                let chat_log_entry = self
+                    .storage
+                    .push_message(friend.chat_handle(), *friend.id(), message)
                     .context("Failed to insert incoming message into storage")?;
-                self.account_event_tx.send(AccountEvent::ChatMessageInserted(*friend.chat_handle(), chat_log_entry))
+                self.account_event_tx
+                    .send(AccountEvent::ChatMessageInserted(
+                        *friend.chat_handle(),
+                        chat_log_entry,
+                    ))
                     .context("Failed to propagate received message")?;
-            },
+            }
             CoreEvent::FriendRequest(request) => {
-                let friend: Friend = self.storage.add_pending_friend(request.public_key)
+                let friend: Friend = self
+                    .storage
+                    .add_pending_friend(request.public_key)
                     .context("Failed to add friend_request to DB")?;
-                let chat_log_entry = self.storage.push_message(friend.chat_handle(), *friend.id(), Message::Normal(request.message))
+                let chat_log_entry = self
+                    .storage
+                    .push_message(
+                        friend.chat_handle(),
+                        *friend.id(),
+                        Message::Normal(request.message),
+                    )
                     .context("Failed to write friend request message to storage")?;
                 self.user_manager.add_pending_friend(friend.clone());
-                self.account_event_tx.send(AccountEvent::FriendAdded(friend.clone()))
+                self.account_event_tx
+                    .send(AccountEvent::FriendAdded(friend.clone()))
                     .context("Failed to propagate friend request")?;
-                self.account_event_tx.send(AccountEvent::ChatMessageInserted(*friend.chat_handle(), chat_log_entry))
+                self.account_event_tx
+                    .send(AccountEvent::ChatMessageInserted(
+                        *friend.chat_handle(),
+                        chat_log_entry,
+                    ))
                     .context("Failed to propagate friend request message")?;
-            },
+            }
             CoreEvent::ReadReceipt(receipt) => {
                 if let Some((handle, message_id)) = self.outgoing_messages.remove(&receipt) {
-                    self.storage.resolve_message(&handle, &message_id)
+                    self.storage
+                        .resolve_message(&handle, &message_id)
                         .context("Failed to resolve message")?;
 
-                    self.account_event_tx.send(AccountEvent::ChatMessageCompleted(handle, message_id))
+                    self.account_event_tx
+                        .send(AccountEvent::ChatMessageCompleted(handle, message_id))
                         .context("Failed to propagate message completion")?;
-
                 } else {
                     error!("Received receipt to unknown message");
                 }
-            },
+            }
             CoreEvent::StatusUpdated(tox_friend) => {
-                let friend = self.user_manager.friend_by_public_key(&tox_friend.public_key());
+                let friend = self
+                    .user_manager
+                    .friend_by_public_key(&tox_friend.public_key());
 
-                if *friend.status() == Status::Offline && tox_friend.status() != ToxStatus::Offline {
-                    let messages = self.storage.unresovled_messages(friend.chat_handle())
+                if *friend.status() == Status::Offline && tox_friend.status() != ToxStatus::Offline
+                {
+                    let messages = self
+                        .storage
+                        .unresovled_messages(friend.chat_handle())
                         .context("Failed to retrieve unsent messages")?;
 
                     for message in messages {
-                        let receipt = self.tox.send_message(&tox_friend, message.message())
+                        let receipt = self
+                            .tox
+                            .send_message(&tox_friend, message.message())
                             .context("Failed to send unsent message")?;
-                        self.outgoing_messages.insert(receipt, (*friend.chat_handle(), *message.id()));
+                        self.outgoing_messages
+                            .insert(receipt, (*friend.chat_handle(), *message.id()));
                     }
                 }
 
                 friend.set_status(Status::from(tox_friend.status()));
-                self.account_event_tx.send(AccountEvent::FriendStatusChanged(*friend.id(), *friend.status()))
+                self.account_event_tx
+                    .send(AccountEvent::FriendStatusChanged(
+                        *friend.id(),
+                        *friend.status(),
+                    ))
                     .context("Failed to propagate status change")?;
             }
         }
@@ -365,14 +406,24 @@ impl AccountManager {
         }
     }
 
-    pub fn add_account(&mut self, account: Account, account_events: mpsc::UnboundedReceiver<AccountEvent>) -> AccountId {
+    pub fn add_account(
+        &mut self,
+        account: Account,
+        account_events: mpsc::UnboundedReceiver<AccountEvent>,
+    ) -> AccountId {
         let account_id = AccountId {
             id: self.next_account_id,
         };
 
         self.next_account_id += 1;
 
-        self.accounts.insert(account_id, AccountBundle { account, account_events });
+        self.accounts.insert(
+            account_id,
+            AccountBundle {
+                account,
+                account_events,
+            },
+        );
         account_id
     }
 
@@ -381,10 +432,15 @@ impl AccountManager {
     }
 
     pub fn get_mut(&mut self, account_id: &AccountId) -> Option<&mut Account> {
-        self.accounts.get_mut(account_id).map(|bundle| &mut bundle.account)
+        self.accounts
+            .get_mut(account_id)
+            .map(|bundle| &mut bundle.account)
     }
 
-    async fn run_account_bundle(id: AccountId, bundle: &mut AccountBundle) -> Option<(AccountId, AccountEvent)> {
+    async fn run_account_bundle(
+        id: AccountId,
+        bundle: &mut AccountBundle,
+    ) -> Option<(AccountId, AccountEvent)> {
         tokio::select! {
             _  = bundle.account.run() => { None }
             event = bundle.account_events.recv() => {
@@ -394,7 +450,6 @@ impl AccountManager {
                 }
             }
         }
-
     }
 
     pub async fn run(&mut self) -> Event {

@@ -4,8 +4,8 @@
 pub mod contact;
 
 mod account;
-mod storage;
 mod savemanager;
+mod storage;
 
 pub use crate::{
     account::AccountId,
@@ -115,7 +115,8 @@ impl Tocks {
             }
             TocksUiEvent::CreateAccount(name, password) => {
                 let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
-                let account = Account::from_account_name(name, password, account_event_tx).context("Failed to create account")?;
+                let account = Account::from_account_name(name, password, account_event_tx)
+                    .context("Failed to create account")?;
 
                 let account_id = self.account_manager.add_account(account, account_event_rx);
                 let account = self.account_manager.get(&account_id).unwrap();
@@ -151,8 +152,9 @@ impl Tocks {
             }
             TocksUiEvent::Login(account_name, password) => {
                 let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
-                let account = Account::from_account_name(account_name.clone(), password, account_event_tx)
-                    .with_context(|| format!("Failed to create account {}", account_name))?;
+                let account =
+                    Account::from_account_name(account_name.clone(), password, account_event_tx)
+                        .with_context(|| format!("Failed to create account {}", account_name))?;
 
                 let account_id = self.account_manager.add_account(account, account_event_rx);
                 let account = self.account_manager.get(&account_id).unwrap();

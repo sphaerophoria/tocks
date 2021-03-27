@@ -1,24 +1,27 @@
 use crate::{
     error::*,
-    sys::{ToxEncryptSaveApi, ToxEncryptSaveImpl}
+    sys::{ToxEncryptSaveApi, ToxEncryptSaveImpl},
 };
 
 use toxcore_sys::*;
 
 pub struct PassKey {
-    inner: PassKeyImpl<ToxEncryptSaveImpl>
+    inner: PassKeyImpl<ToxEncryptSaveImpl>,
 }
 
 impl PassKey {
     pub fn new(passphrase: &str) -> Result<PassKey, KeyDerivationError> {
         Ok(PassKey {
-            inner: PassKeyImpl::new(ToxEncryptSaveImpl{}, passphrase)?
+            inner: PassKeyImpl::new(ToxEncryptSaveImpl {}, passphrase)?,
         })
     }
 
-    pub fn from_encrypted_slice(passphrase: &str, input: &[u8]) -> Result<PassKey, KeyDerivationError> {
+    pub fn from_encrypted_slice(
+        passphrase: &str,
+        input: &[u8],
+    ) -> Result<PassKey, KeyDerivationError> {
         Ok(PassKey {
-            inner: PassKeyImpl::from_encrypted_slice(ToxEncryptSaveImpl{}, passphrase, input)?
+            inner: PassKeyImpl::from_encrypted_slice(ToxEncryptSaveImpl {}, passphrase, input)?,
         })
     }
 
@@ -26,38 +29,37 @@ impl PassKey {
         self.inner.encrypt(plaintext)
     }
 
-    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, DecryptionError>  {
+    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, DecryptionError> {
         self.inner.decrypt(ciphertext)
     }
 }
 
-struct PassKeyImpl<Api: ToxEncryptSaveApi>
-{
+struct PassKeyImpl<Api: ToxEncryptSaveApi> {
     api: Api,
     key: *const Tox_Pass_Key,
 }
 
 unsafe impl<Api: ToxEncryptSaveApi> Send for PassKeyImpl<Api> {}
 
-impl<Api: ToxEncryptSaveApi> PassKeyImpl<Api>
-{
+impl<Api: ToxEncryptSaveApi> PassKeyImpl<Api> {
     fn new(api: Api, passphrase: &str) -> Result<PassKeyImpl<Api>, KeyDerivationError> {
         let mut err = TOX_ERR_KEY_DERIVATION_OK;
         unsafe {
             let key = api.pass_key_derive(passphrase.as_ptr(), passphrase.len() as u64, &mut err);
 
             if err != TOX_ERR_KEY_DERIVATION_OK {
-                return Err(KeyDerivationError)
+                return Err(KeyDerivationError);
             }
 
-            Ok(PassKeyImpl {
-                api,
-                key
-            })
+            Ok(PassKeyImpl { api, key })
         }
     }
 
-    fn from_encrypted_slice(api: Api, passphrase: &str, input: &[u8]) -> Result<PassKeyImpl<Api>, KeyDerivationError> {
+    fn from_encrypted_slice(
+        api: Api,
+        passphrase: &str,
+        input: &[u8],
+    ) -> Result<PassKeyImpl<Api>, KeyDerivationError> {
         if input.len() < TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize {
             return Err(KeyDerivationError);
         }
@@ -73,15 +75,17 @@ impl<Api: ToxEncryptSaveApi> PassKeyImpl<Api>
             }
 
             let mut err = TOX_ERR_KEY_DERIVATION_OK;
-            let key = api.pass_key_derive_with_salt(passphrase.as_ptr(), passphrase.len() as u64, salt.as_ptr(), &mut err);
+            let key = api.pass_key_derive_with_salt(
+                passphrase.as_ptr(),
+                passphrase.len() as u64,
+                salt.as_ptr(),
+                &mut err,
+            );
             if err != TOX_ERR_KEY_DERIVATION_OK {
                 return Err(KeyDerivationError);
             }
 
-            Ok(PassKeyImpl {
-                api,
-                key
-            })
+            Ok(PassKeyImpl { api, key })
         }
     }
 
@@ -91,7 +95,13 @@ impl<Api: ToxEncryptSaveApi> PassKeyImpl<Api>
             let mut output = Vec::with_capacity(output_len);
 
             let mut err = TOX_ERR_ENCRYPTION_OK;
-            self.api.pass_key_encrypt(self.key, plaintext.as_ptr(), plaintext.len() as u64, output.as_mut_ptr(), &mut err);
+            self.api.pass_key_encrypt(
+                self.key,
+                plaintext.as_ptr(),
+                plaintext.len() as u64,
+                output.as_mut_ptr(),
+                &mut err,
+            );
             if err != TOX_ERR_ENCRYPTION_OK {
                 return Err(EncryptionError);
             }
@@ -102,13 +112,19 @@ impl<Api: ToxEncryptSaveApi> PassKeyImpl<Api>
         }
     }
 
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, DecryptionError>  {
+    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, DecryptionError> {
         unsafe {
             let output_len = ciphertext.len() - TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize;
             let mut output = Vec::with_capacity(output_len);
 
             let mut err = TOX_ERR_DECRYPTION_OK;
-            self.api.pass_key_decrypt(self.key, ciphertext.as_ptr(), ciphertext.len() as u64, output.as_mut_ptr(), &mut err);
+            self.api.pass_key_decrypt(
+                self.key,
+                ciphertext.as_ptr(),
+                ciphertext.len() as u64,
+                output.as_mut_ptr(),
+                &mut err,
+            );
 
             if err != TOX_ERR_DECRYPTION_OK {
                 return Err(DecryptionError);

@@ -158,7 +158,6 @@ impl Storage {
 
                 let pending: bool = row.get_raw(4) != ValueRef::Null;
 
-
                 Ok((chat_handle, user_handle, public_key_bytes, name, pending))
             })
             .context("Failed to map friend list response")?;
@@ -166,16 +165,22 @@ impl Storage {
         query_results
             .into_iter()
             .filter_map(std::result::Result::ok)
-            .map(|(chat_handle, user_handle, public_key_bytes, name, pending)| {
-                let status = if pending { Status::Pending } else { Status::Offline };
-                Ok(Friend::new(
-                    user_handle,
-                    chat_handle,
-                    PublicKey::from_bytes(public_key_bytes)?,
-                    name,
-                    status,
-                ))
-            })
+            .map(
+                |(chat_handle, user_handle, public_key_bytes, name, pending)| {
+                    let status = if pending {
+                        Status::Pending
+                    } else {
+                        Status::Offline
+                    };
+                    Ok(Friend::new(
+                        user_handle,
+                        chat_handle,
+                        PublicKey::from_bytes(public_key_bytes)?,
+                        name,
+                        status,
+                    ))
+                },
+            )
             .collect::<Result<Vec<Friend>>>()
             .context("Failed to convert DB friends")
     }
@@ -196,7 +201,11 @@ impl Storage {
         let name = public_key.to_string();
         let mut friend = Self::add_friend_transaction(&transaction, public_key, name)?;
 
-        transaction.execute("INSERT INTO pending_friends (user_id) VALUES (?1)", params![friend.id().id()])
+        transaction
+            .execute(
+                "INSERT INTO pending_friends (user_id) VALUES (?1)",
+                params![friend.id().id()],
+            )
             .context("Failed to insert into pending friend")?;
 
         transaction.commit()?;
@@ -209,9 +218,8 @@ impl Storage {
     fn add_friend_transaction(
         transaction: &Transaction,
         public_key: PublicKey,
-        name: String
+        name: String,
     ) -> Result<Friend> {
-
         let user_id = Self::add_user_transaction(&transaction, &public_key, &name)?;
 
         transaction
@@ -288,7 +296,11 @@ impl Storage {
     }
 
     pub fn resolve_pending_friend_request(&mut self, user_handle: &UserHandle) -> Result<()> {
-        self.connection.execute("DELETE FROM pending_friends WHERE user_id = ?1", params![user_handle.id()])
+        self.connection
+            .execute(
+                "DELETE FROM pending_friends WHERE user_id = ?1",
+                params![user_handle.id()],
+            )
             .context("Failed to remove user from pending friends table")?;
 
         Ok(())

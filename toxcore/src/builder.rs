@@ -10,8 +10,8 @@ use paste::paste;
 use toxcore_sys::*;
 
 use std::{
+    ffi::{CStr, CString, NulError},
     pin::Pin,
-    ffi::{CStr, CString, NulError}
 };
 
 macro_rules! impl_builder_option {
@@ -485,13 +485,9 @@ mod tests {
 
         let mut fixture = BuilderFixture::new(mock)?;
 
-        fixture
-            .builder
-            .savedata(SaveData::ToxSave(savedata));
-
+        fixture.builder.savedata(SaveData::ToxSave(savedata));
 
         fixture.builder.build(generate_tox_api_mock()).unwrap();
-
 
         Ok(())
     }
@@ -518,10 +514,7 @@ mod tests {
 
         let mut fixture = BuilderFixture::new(mock)?;
 
-        fixture
-            .builder
-            .savedata(SaveData::SecretKey(savedata));
-
+        fixture.builder.savedata(SaveData::SecretKey(savedata));
 
         fixture.builder.build(generate_tox_api_mock()).unwrap();
 

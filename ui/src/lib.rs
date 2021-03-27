@@ -4,7 +4,8 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, TocksEvent, TocksUiEvent, UserHandle, Status
+    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent, TocksUiEvent,
+    UserHandle,
 };
 
 use toxcore::{Message, ToxId};
@@ -235,7 +236,7 @@ impl QTocks {
     }
 
     fn get_offline_accounts(&self) -> QVariantList {
-        let mut accounts  = QVariantList::default();
+        let mut accounts = QVariantList::default();
         accounts.push(QString::from("Create a new account...").to_qvariant());
         for account in &*self.offline_accounts.read().unwrap() {
             accounts.push(QString::from(account.as_ref()).to_qvariant())
@@ -276,7 +277,7 @@ impl QTocks {
         }
     }
 
-    fn handle_ui_callback(& self, event: TocksEvent) {
+    fn handle_ui_callback(&self, event: TocksEvent) {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
             TocksEvent::Error(e) => self.error(e.into()),

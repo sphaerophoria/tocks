@@ -146,7 +146,6 @@ pub enum KeyDecodeError {
 #[error("Tox instance no longer valid")]
 pub struct ToxDestructedError;
 
-
 #[derive(Error, Debug)]
 #[error("Failed to derive key from provided input")]
 pub struct KeyDerivationError;

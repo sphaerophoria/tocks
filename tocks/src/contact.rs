@@ -118,7 +118,10 @@ impl UserManager {
         self.chat_mapping.insert(*friend.chat_handle(), idx);
         self.user_mapping.insert(*friend.id(), idx);
         self.pk_mapping.insert(friend.public_key().clone(), idx);
-        self.friends.push(FriendBundle { friend, tox_friend: None });
+        self.friends.push(FriendBundle {
+            friend,
+            tox_friend: None,
+        });
 
         &self.friends.last().unwrap().friend
     }
