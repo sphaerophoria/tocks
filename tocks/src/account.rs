@@ -89,19 +89,21 @@ impl Account {
         }
 
         let db_name = format!("{}.db", name);
-        let storage = Storage::open(APP_DIRS.data_dir.join(&db_name));
+        let storage = Storage::open(
+            APP_DIRS.data_dir.join(&db_name),
+            &tox.self_public_key(),
+            &tox.self_name(),
+        );
 
         let mut storage = match storage {
             Ok(s) => s,
             Err(e) => {
                 error!("Failed to open storage: {}", e);
-                Storage::open_ram()?
+                Storage::open_ram(&tox.self_public_key(), &tox.self_name())?
             }
         };
 
-        let self_user_handle = storage
-            .add_user(tox.self_public_key(), tox.self_name())
-            .context("Failed to add self to DB")?;
+        let self_user_handle = storage.self_user_handle();
 
         let mut friends = storage
             .friends()?

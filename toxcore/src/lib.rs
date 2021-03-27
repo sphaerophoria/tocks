@@ -39,6 +39,8 @@ macro_rules! impl_key_type {
         }
 
         impl $name {
+            pub const SIZE: usize = $expected_size as usize;
+
             pub fn as_bytes(&self) -> &[u8] {
                 &self.key
             }
@@ -126,7 +128,7 @@ pub(crate) struct FriendData {
     pub(crate) status: Status,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Normal(String),
     Action(String),
