@@ -10,6 +10,7 @@ use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStat
 
 use anyhow::{anyhow, Context, Error, Result};
 use futures::FutureExt;
+use fslock::LockFile;
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
@@ -30,6 +31,7 @@ pub(crate) enum AccountEvent {
 }
 
 pub(crate) struct Account {
+    account_lock: LockFile,
     tox: Tox,
     save_manager: SaveManager,
     user_manager: UserManager,
@@ -49,6 +51,8 @@ impl Account {
         password: String,
         account_event_tx: mpsc::UnboundedSender<AccountEvent>,
     ) -> Result<Account> {
+
+        let account_lock = lock_account(account_name.clone())?;
 
         let save_manager = create_save_manager(account_name.clone(), &password)?;
         let (mut tox, toxcore_callback_rx) = create_tox(save_manager.load())?;
@@ -76,6 +80,7 @@ impl Account {
         let self_user_handle = storage.self_user_handle();
 
         Ok(Account {
+            account_lock,
             tox,
             save_manager,
             user_manager,
@@ -544,4 +549,22 @@ fn initialize_friend_lists(storage: &mut Storage, tox: &mut Tox, user_manager: &
     }
 
     Ok(())
+}
+
+fn lock_account(mut account_name: String) -> Result<LockFile> {
+    account_name.push_str(".lock");
+
+    let lock_path = APP_DIRS.data_dir.join(account_name);
+
+    let mut lock_file = LockFile::open(&lock_path)
+        .context("Failed to open lock file")?;
+
+    let lock_success = lock_file.try_lock()
+        .context("Io error on lock file")?;
+
+    if !lock_success {
+        return Err(anyhow!("Failed to lock account"));
+    }
+
+    Ok(lock_file)
 }
