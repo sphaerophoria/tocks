@@ -107,6 +107,10 @@ pub trait ToxApi: Send + Sync {
         tox: *mut toxcore_sys::Tox,
         callback: tox_friend_connection_status_cb,
     );
+    unsafe fn callback_friend_name(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_name_cb);
 }
 
 pub(crate) struct ToxApiImpl;
@@ -294,6 +298,13 @@ impl ToxApi for ToxApiImpl {
         callback: tox_friend_connection_status_cb,
     ) {
         tox_callback_friend_connection_status(tox, callback)
+    }
+
+    unsafe fn callback_friend_name(
+        &self,
+        tox: *mut toxcore_sys::Tox,
+        callback: tox_friend_name_cb) {
+        tox_callback_friend_name(tox, callback)
     }
 }
 

@@ -63,4 +63,10 @@ impl Account {
             .borrow_mut()
             .set_status(status);
     }
+
+    pub fn set_user_name(&self, user_id: UserHandle, name: &str) {
+        self.friends_storage.lock().unwrap()[&user_id]
+            .borrow_mut()
+            .set_name(name);
+    }
 }

@@ -66,6 +66,10 @@ impl Friend {
         &self.name
     }
 
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
     pub fn status(&self) -> &Status {
         &self.status
     }

@@ -48,6 +48,7 @@ pub enum TocksEvent {
     MessageInserted(AccountId, ChatHandle, ChatLogEntry),
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
     FriendStatusChanged(AccountId, UserHandle, Status),
+    UserNameChanged(AccountId, UserHandle, String),
 }
 
 // Things that Tocks can handle in it's core iteration loop

@@ -322,6 +322,15 @@ impl QTocks {
                     .borrow()
                     .set_friend_status(user_id, status);
             }
+            TocksEvent::UserNameChanged(account_id, user_id, name) => {
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account_id)
+                    .unwrap()
+                    .borrow()
+                    .set_user_name(user_id, &name);
+            }
         }
     }
 

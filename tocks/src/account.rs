@@ -28,10 +28,11 @@ pub(crate) enum AccountEvent {
     ChatMessageInserted(ChatHandle, ChatLogEntry),
     ChatMessageCompleted(ChatHandle, ChatMessageId),
     FriendStatusChanged(UserHandle, Status),
+    UserNameChanged(UserHandle, String),
 }
 
 pub(crate) struct Account {
-    account_lock: LockFile,
+    _account_lock: LockFile,
     tox: Tox,
     save_manager: SaveManager,
     user_manager: UserManager,
@@ -69,7 +70,6 @@ impl Account {
 
         let mut storage = create_storage(&account_name, &tox.self_public_key(), &tox.self_name())?;
 
-
         let mut user_manager = UserManager::new();
 
         initialize_friend_lists(&mut storage, &mut tox, &mut user_manager)?;
@@ -80,7 +80,7 @@ impl Account {
         let self_user_handle = storage.self_user_handle();
 
         Ok(Account {
-            account_lock,
+            _account_lock: account_lock,
             tox,
             save_manager,
             user_manager,
@@ -273,6 +273,28 @@ impl Account {
                     ))
                     .context("Failed to propagate status change")?;
             }
+            CoreEvent::NameUpdated(tox_friend) => {
+                let friend = self
+                    .user_manager
+                    .friend_by_public_key(&tox_friend.public_key());
+
+                friend.set_name(tox_friend.name());
+
+                if let Err(e) = self.storage.update_user_name(friend.id(), friend.name()) {
+                    error!("Failed to update user name in storage: {}", e);
+                }
+
+                if let Err(e) = self.save_manager.save(&self.tox.get_savedata()) {
+                    error!("Failed to update tox save for user name change: {}", e);
+                }
+
+                self.account_event_tx
+                    .send(AccountEvent::UserNameChanged(
+                        *friend.id(),
+                        friend.name().to_string(),
+                    ))
+                    .context("Failed to propagate name change")?;
+            }
         }
 
         Ok(())
@@ -292,6 +314,14 @@ impl Account {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Drop for Account {
+    fn drop(&mut self) {
+        if let Err(e) = self.save_manager.save(&self.tox.get_savedata()) {
+            error!("Failed to save tox save on shutdown: {}", e);
         }
     }
 }
@@ -413,6 +443,9 @@ impl AccountManager {
             Some((id, AccountEvent::FriendStatusChanged(user_handle, status))) => {
                 TocksEvent::FriendStatusChanged(id, user_handle, status).into()
             }
+            Some((id, AccountEvent::UserNameChanged(user_handle, name))) => {
+                TocksEvent::UserNameChanged(id, user_handle, name).into()
+            }
             None => {
                 error!("Error in account handler");
                 Event::None
@@ -528,6 +561,12 @@ fn initialize_friend_lists(storage: &mut Storage, tox: &mut Tox, user_manager: &
             storage
                 .resolve_pending_friend_request(friend.id())
                 .context("Failed to remove pending friend request from storage")?;
+        }
+
+        if friend.name() != tox_friend.name() {
+            friend.set_name(tox_friend.name());
+            storage.update_user_name(friend.id(), friend.name())
+                .context("Failed to update user name")?;
         }
 
         user_manager.add_friend(friend, tox_friend);

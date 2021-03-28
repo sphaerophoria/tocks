@@ -323,6 +323,16 @@ impl Storage {
         Ok(UserHandle { user_id })
     }
 
+    pub fn update_user_name(&mut self, user_handle: &UserHandle, name: &str) -> Result<()>{
+        self.connection
+            .execute(
+                "UPDATE users SET name = ?2 WHERE id = ?1", params![user_handle.id(), name]
+            )
+            .context("Failed to update user name")?;
+
+        Ok(())
+    }
+
     pub fn resolve_pending_friend_request(&mut self, user_handle: &UserHandle) -> Result<()> {
         self.connection
             .execute(
@@ -920,6 +930,23 @@ mod tests {
         assert_eq!(loaded_messages[5].complete(), true);
 
         Ok(())
+    }
 
+    #[test]
+    fn name_change() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_friend(friend_pk, "test1".to_string())?;
+
+        storage.update_user_name(friend.id(), "new test1")?;
+
+        let friends = storage.friends()?;
+
+        assert_eq!(friends.len(), 1);
+        assert_eq!(friends[0].name(), "new test1");
+
+        Ok(())
     }
 }

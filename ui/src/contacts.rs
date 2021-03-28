@@ -24,6 +24,11 @@ impl Friend {
         self.status = status_to_qstring(&status);
         self.statusChanged();
     }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = QString::from(name);
+        self.nameChanged();
+    }
 }
 
 impl From<&TocksFriend> for Friend {

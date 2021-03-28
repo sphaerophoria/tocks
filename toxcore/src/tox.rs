@@ -200,6 +200,9 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 sys_tox,
                 Some(tox_friend_connection_status_callback::<Api>),
             );
+            api.callback_friend_name(
+                sys_tox,
+                Some(tox_friend_name_callback::<Api>));
         }
 
         // FIXME: friends should be initialized here and only accessed later,
@@ -708,6 +711,38 @@ fn convert_status(status: TOX_USER_STATUS) -> Result<Status, ToxFriendQueryError
     Ok(status)
 }
 
+unsafe extern "C" fn tox_friend_name_callback<Api: ToxApi>(
+    _tox: *mut toxcore_sys::Tox,
+    friend_number: u32,
+    input_name: *const u8,
+    len: u64,
+    user_data: *mut std::os::raw::c_void,
+) {
+    let tox_data = &mut *(user_data as *mut CallbackData<Api>);
+
+    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return;
+        }
+    };
+
+    let name = std::slice::from_raw_parts(input_name, len as usize);
+
+    friend_data.write().unwrap().name = String::from_utf8_lossy(name).to_string();
+
+    let f = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    if let Some(callback) = &mut tox_data.data.event_callback {
+        (*callback)(Event::NameUpdated(f));
+    }
+}
+
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -793,6 +828,10 @@ pub(crate) mod tests {
                 .times(1);
 
             mock.expect_callback_friend_connection_status()
+                .return_const(())
+                .times(1);
+
+            mock.expect_callback_friend_name()
                 .return_const(())
                 .times(1);
 
@@ -935,7 +974,7 @@ pub(crate) mod tests {
             .return_const(fixture.default_peer_id)
             .once();
 
-        fixture.tox.add_friend_norequest(&fixture.default_peer_pk);
+        fixture.tox.add_friend_norequest(&fixture.default_peer_pk)?;
 
         let mut callback_data = CallbackData {
             api: &fixture.tox.api,
@@ -956,6 +995,8 @@ pub(crate) mod tests {
 
         Ok(())
     }
+
+    // FIXME: test friend name dispatch
 
     macro_rules! test_array_getter {
         ($name:ident, $value:expr) => {

@@ -147,4 +147,5 @@ pub enum Event {
     FriendRequest(FriendRequest),
     ReadReceipt(Receipt),
     StatusUpdated(Friend),
+    NameUpdated(Friend),
 }
