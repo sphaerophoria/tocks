@@ -46,6 +46,11 @@ impl SaveManager {
     }
 
     pub fn save(&self, data: &[u8]) -> Result<()> {
+        let save_dir = self.path.parent().unwrap();
+
+        std::fs::create_dir_all(save_dir)
+            .with_context(|| format!("Failed to create save dir {}", save_dir.to_string_lossy()))?;
+
         // Atomic write via a named temporary file. Use the tox directory to
         // ensure that we are on the same mount as the file we want to rename to
         let mut tempfile = NamedTempFile::new_in(self.path.parent().unwrap())
