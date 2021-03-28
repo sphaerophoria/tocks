@@ -5,7 +5,6 @@ use crate::{
     Event, TocksEvent, APP_DIRS,
 };
 
-use mpsc::UnboundedReceiver;
 use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStatus, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Error, Result};
@@ -501,7 +500,7 @@ pub fn retrieve_account_list() -> Result<Vec<String>> {
 }
 
 fn create_save_manager(account_name: String, password: &str) -> Result<SaveManager> {
-    let mut account_file = account_name.clone();
+    let mut account_file = account_name;
     account_file.push_str(".tox");
     let account_file_path = TOX_SAVE_DIR.join(account_file);
 
