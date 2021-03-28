@@ -84,7 +84,7 @@ Rectangle {
                 }
 
                 TocksButton {
-                    visible: friend.status == "pending"
+                    visible: friend !== undefined && friend.status == "pending"
                     Layout.fillHeight: true
                     Layout.preferredWidth: 60
                     text: "Accept"
@@ -94,7 +94,7 @@ Rectangle {
                 }
 
                 TocksButton {
-                    visible: friend.status == "pending"
+                    visible: friend !== undefined && friend.status == "pending"
                     Layout.fillHeight: true
                     Layout.preferredWidth: 60
                     text: "Reject"
