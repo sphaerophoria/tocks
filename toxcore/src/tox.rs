@@ -200,9 +200,7 @@ impl<Api: ToxApi> ToxImpl<Api> {
                 sys_tox,
                 Some(tox_friend_connection_status_callback::<Api>),
             );
-            api.callback_friend_name(
-                sys_tox,
-                Some(tox_friend_name_callback::<Api>));
+            api.callback_friend_name(sys_tox, Some(tox_friend_name_callback::<Api>));
         }
 
         // FIXME: friends should be initialized here and only accessed later,
@@ -742,7 +740,6 @@ unsafe extern "C" fn tox_friend_name_callback<Api: ToxApi>(
     }
 }
 
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -831,9 +828,7 @@ pub(crate) mod tests {
                 .return_const(())
                 .times(1);
 
-            mock.expect_callback_friend_name()
-                .return_const(())
-                .times(1);
+            mock.expect_callback_friend_name().return_const(()).times(1);
 
             let tox = ToxImpl::new(mock, std::ptr::null_mut(), None);
 

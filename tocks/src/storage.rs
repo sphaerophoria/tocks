@@ -323,10 +323,11 @@ impl Storage {
         Ok(UserHandle { user_id })
     }
 
-    pub fn update_user_name(&mut self, user_handle: &UserHandle, name: &str) -> Result<()>{
+    pub fn update_user_name(&mut self, user_handle: &UserHandle, name: &str) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE users SET name = ?2 WHERE id = ?1", params![user_handle.id(), name]
+                "UPDATE users SET name = ?2 WHERE id = ?1",
+                params![user_handle.id(), name],
             )
             .context("Failed to update user name")?;
 
@@ -839,26 +840,54 @@ mod tests {
         // with the wrong UID. The DB intentionally is designed to allow this
         // case. This makes it more flexible for when we eventually add group
         // messages
-        storage.push_message(friend1.chat_handle(), self_user_handle, Message::Normal("msg1".into()))?;
-        storage.push_message(friend2.chat_handle(), *friend2.id(), Message::Normal("msg2".into()))?;
-        storage.push_message(friend2.chat_handle(), self_user_handle, Message::Action("msg3".into()))?;
-        storage.push_message(friend1.chat_handle(), *friend1.id(), Message::Normal("msg4".into()))?;
+        storage.push_message(
+            friend1.chat_handle(),
+            self_user_handle,
+            Message::Normal("msg1".into()),
+        )?;
+        storage.push_message(
+            friend2.chat_handle(),
+            *friend2.id(),
+            Message::Normal("msg2".into()),
+        )?;
+        storage.push_message(
+            friend2.chat_handle(),
+            self_user_handle,
+            Message::Action("msg3".into()),
+        )?;
+        storage.push_message(
+            friend1.chat_handle(),
+            *friend1.id(),
+            Message::Normal("msg4".into()),
+        )?;
         let end_time = Utc::now();
 
         // Ensure messages have the correct content after pulling from DB. We
         // will test message consistency with pending messages in another test
         let friend1_messages = storage.load_messages(friend1.chat_handle())?;
         assert_eq!(friend1_messages.len(), 2);
-        assert_eq!(*friend1_messages[0].message(), Message::Normal("msg1".into()));
+        assert_eq!(
+            *friend1_messages[0].message(),
+            Message::Normal("msg1".into())
+        );
         assert_eq!(*friend1_messages[0].sender(), self_user_handle);
-        assert_eq!(*friend1_messages[1].message(), Message::Normal("msg4".into()));
+        assert_eq!(
+            *friend1_messages[1].message(),
+            Message::Normal("msg4".into())
+        );
         assert_eq!(*friend1_messages[1].sender(), *friend1.id());
 
         let friend2_messages = storage.load_messages(friend2.chat_handle())?;
         assert_eq!(friend2_messages.len(), 2);
-        assert_eq!(*friend2_messages[0].message(), Message::Normal("msg2".into()));
+        assert_eq!(
+            *friend2_messages[0].message(),
+            Message::Normal("msg2".into())
+        );
         assert_eq!(*friend2_messages[0].sender(), *friend2.id());
-        assert_eq!(*friend2_messages[1].message(), Message::Action("msg3".into()));
+        assert_eq!(
+            *friend2_messages[1].message(),
+            Message::Action("msg3".into())
+        );
         assert_eq!(*friend2_messages[1].sender(), self_user_handle);
 
         // Ensure that messages have reasonable timestamps relative to the times
@@ -882,15 +911,39 @@ mod tests {
         let friend = storage.add_friend(friend_pk, "test1".to_string())?;
 
         // Add a few of each message for normal case
-        storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("msg1".into()))?;
-        storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("msg2".into()))?;
-        storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("msg3".into()))?;
+        storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("msg1".into()),
+        )?;
+        storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("msg2".into()),
+        )?;
+        storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("msg3".into()),
+        )?;
 
-        let unresolved_msg1 = storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("unresolved_msg1".into()))?;
+        let unresolved_msg1 = storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("unresolved_msg1".into()),
+        )?;
         storage.add_unresolved_message(unresolved_msg1.id())?;
-        let unresolved_msg2 = storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("unresolved_msg2".into()))?;
+        let unresolved_msg2 = storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("unresolved_msg2".into()),
+        )?;
         storage.add_unresolved_message(unresolved_msg2.id())?;
-        let unresolved_msg3 = storage.push_message(friend.chat_handle(), self_user_handle, Message::Normal("unresolved_msg3".into()))?;
+        let unresolved_msg3 = storage.push_message(
+            friend.chat_handle(),
+            self_user_handle,
+            Message::Normal("unresolved_msg3".into()),
+        )?;
         storage.add_unresolved_message(unresolved_msg3.id())?;
 
         // Ensure that unresolved messages in history are correct
@@ -899,9 +952,18 @@ mod tests {
         assert_eq!(unresolved_messages[0].id(), unresolved_msg1.id());
         assert_eq!(unresolved_messages[1].id(), unresolved_msg2.id());
         assert_eq!(unresolved_messages[2].id(), unresolved_msg3.id());
-        assert_eq!(*unresolved_messages[0].message(), Message::Normal("unresolved_msg1".into()));
-        assert_eq!(*unresolved_messages[1].message(), Message::Normal("unresolved_msg2".into()));
-        assert_eq!(*unresolved_messages[2].message(), Message::Normal("unresolved_msg3".into()));
+        assert_eq!(
+            *unresolved_messages[0].message(),
+            Message::Normal("unresolved_msg1".into())
+        );
+        assert_eq!(
+            *unresolved_messages[1].message(),
+            Message::Normal("unresolved_msg2".into())
+        );
+        assert_eq!(
+            *unresolved_messages[2].message(),
+            Message::Normal("unresolved_msg3".into())
+        );
 
         // Ensure that loaded messages correctly mark completion state
         let loaded_messages = storage.load_messages(friend.chat_handle())?;

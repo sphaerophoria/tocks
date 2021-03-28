@@ -9,8 +9,8 @@ use mpsc::UnboundedReceiver;
 use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStatus, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Error, Result};
-use futures::FutureExt;
 use fslock::LockFile;
+use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
@@ -52,7 +52,6 @@ impl Account {
         password: String,
         account_event_tx: mpsc::UnboundedSender<AccountEvent>,
     ) -> Result<Account> {
-
         let account_lock = lock_account(account_name.clone())?;
 
         let save_manager = create_save_manager(account_name.clone(), &password)?;
@@ -468,7 +467,7 @@ pub fn retrieve_account_list() -> Result<Vec<String>> {
     Ok(accounts)
 }
 
-fn create_save_manager(account_name: String, password: &str)  -> Result<SaveManager> {
+fn create_save_manager(account_name: String, password: &str) -> Result<SaveManager> {
     let mut account_file = account_name.clone();
     account_file.push_str(".tox");
     let account_file_path = TOX_SAVE_DIR.join(account_file);
@@ -483,7 +482,9 @@ fn create_save_manager(account_name: String, password: &str)  -> Result<SaveMana
     Ok(save_manager)
 }
 
-fn create_tox(savedata: Result<Vec<u8>>) -> Result<(Tox, mpsc::UnboundedReceiver<toxcore::Event>), Error> {
+fn create_tox(
+    savedata: Result<Vec<u8>>,
+) -> Result<(Tox, mpsc::UnboundedReceiver<toxcore::Event>), Error> {
     let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
 
     let builder = Tox::builder()?;
@@ -502,24 +503,18 @@ fn create_tox(savedata: Result<Vec<u8>>) -> Result<(Tox, mpsc::UnboundedReceiver
         .log(true)
         .build()?;
 
-
     Ok((tox, toxcore_callback_rx))
 }
 
 fn create_storage(account_name: &str, self_pk: &PublicKey, current_name: &str) -> Result<Storage> {
     let db_name = format!("{}.db", account_name);
-    let storage = Storage::open(
-        APP_DIRS.data_dir.join(&db_name),
-        self_pk,
-        current_name,
-    );
+    let storage = Storage::open(APP_DIRS.data_dir.join(&db_name), self_pk, current_name);
 
     let storage = match storage {
         Ok(s) => s,
         Err(e) => {
             error!("Failed to open storage: {}", e);
-            Storage::open_ram(self_pk, current_name)
-                .context("Failed to open ram DB")?
+            Storage::open_ram(self_pk, current_name).context("Failed to open ram DB")?
         }
     };
 
@@ -539,7 +534,11 @@ fn create_storage(account_name: &str, self_pk: &PublicKey, current_name: &str) -
 /// removes a friend. That friend will be re-added because we do not know
 /// if we failed to add the friend to toxcore in a previous tocks run or if
 /// the user intentionally removed the friend from another tox client
-fn initialize_friend_lists(storage: &mut Storage, tox: &mut Tox, user_manager: &mut UserManager) -> Result<()> {
+fn initialize_friend_lists(
+    storage: &mut Storage,
+    tox: &mut Tox,
+    user_manager: &mut UserManager,
+) -> Result<()> {
     let mut friends = storage
         .friends()?
         .into_iter()
@@ -565,7 +564,8 @@ fn initialize_friend_lists(storage: &mut Storage, tox: &mut Tox, user_manager: &
 
         if friend.name() != tox_friend.name() {
             friend.set_name(tox_friend.name());
-            storage.update_user_name(friend.id(), friend.name())
+            storage
+                .update_user_name(friend.id(), friend.name())
                 .context("Failed to update user name")?;
         }
 
@@ -595,11 +595,9 @@ fn lock_account(mut account_name: String) -> Result<LockFile> {
 
     let lock_path = APP_DIRS.data_dir.join(account_name);
 
-    let mut lock_file = LockFile::open(&lock_path)
-        .context("Failed to open lock file")?;
+    let mut lock_file = LockFile::open(&lock_path).context("Failed to open lock file")?;
 
-    let lock_success = lock_file.try_lock()
-        .context("Io error on lock file")?;
+    let lock_success = lock_file.try_lock().context("Io error on lock file")?;
 
     if !lock_success {
         return Err(anyhow!("Failed to lock account"));
