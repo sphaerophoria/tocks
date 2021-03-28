@@ -48,3 +48,11 @@ impl From<&TocksFriend> for Friend {
         }
     }
 }
+
+#[allow(non_snake_case)]
+#[derive(QGadget, Clone, Default)]
+pub struct User {
+    pub id: qt_property!(i64),
+    pub name: qt_property!(QString),
+    pub publicKey: qt_property!(QString),
+}

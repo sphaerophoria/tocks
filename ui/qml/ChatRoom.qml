@@ -97,7 +97,11 @@ Rectangle {
                     visible: friend !== undefined && friend.status == "pending"
                     Layout.fillHeight: true
                     Layout.preferredWidth: 60
-                    text: "Reject"
+                    text: "Block"
+
+                    onClicked: {
+                        tocks.blockUser(account.id, friend.userId)
+                    }
                 }
             }
         }

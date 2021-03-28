@@ -87,6 +87,34 @@ pub struct FriendBundle {
     pub tox_friend: Option<toxcore::Friend>,
 }
 
+pub struct User {
+    id: UserHandle,
+    public_key: PublicKey,
+    name: String,
+}
+
+impl User {
+    pub fn new(id: UserHandle, public_key: PublicKey, name: String) -> User {
+        User {
+            id,
+            public_key,
+            name,
+        }
+    }
+
+    pub fn id(&self) -> &UserHandle {
+        &self.id
+    }
+
+    pub fn public_key(&self) -> &PublicKey {
+        &self.public_key
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct UserManager {
     // Map chat handle, user handle, public

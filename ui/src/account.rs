@@ -1,4 +1,4 @@
-use crate::contacts::Friend;
+use crate::contacts::{Friend, User};
 
 use qmetaobject::*;
 use tocks::{AccountId, Status, UserHandle};
@@ -19,8 +19,11 @@ pub struct Account {
     nameChanged: qt_signal!(),
     friends: qt_property!(QVariantList; READ get_friends NOTIFY friendsChanged),
     friendsChanged: qt_signal!(),
+    blockedUsers: qt_property!(QVariantList; READ get_blocked_users NOTIFY blockedUsersChanged),
+    blockedUsersChanged: qt_signal!(),
 
     friends_storage: Mutex<HashMap<UserHandle, Box<RefCell<Friend>>>>,
+    blocked_users_storage: Mutex<HashMap<UserHandle, User>>,
 }
 
 impl Account {
@@ -36,8 +39,11 @@ impl Account {
             nameChanged: Default::default(),
             friends: Default::default(),
             friendsChanged: Default::default(),
+            blockedUsers: Default::default(),
+            blockedUsersChanged: Default::default(),
 
             friends_storage: Default::default(),
+            blocked_users_storage: Default::default(),
         }
     }
 
@@ -46,6 +52,13 @@ impl Account {
         let friend = Box::new(RefCell::new(Friend::from(friend)));
         unsafe { QObject::cpp_construct(&friend) };
         self.friends_storage.lock().unwrap().insert(id, friend);
+        self.friendsChanged()
+    }
+
+    pub fn remove_friend(&self, user_id: UserHandle) {
+        // Keep a reference to the removed friend so it does not go out of scope
+        // until QML stops using it
+        let _friend = self.friends_storage.lock().unwrap().remove(&user_id);
         self.friendsChanged()
     }
 
@@ -68,5 +81,28 @@ impl Account {
         self.friends_storage.lock().unwrap()[&user_id]
             .borrow_mut()
             .set_name(name);
+    }
+
+    pub fn add_blocked_user(&self, user: &tocks::User) {
+        // Assume we are not duplicating our blocked users
+        let qt_user = User {
+            id: user.id().id(),
+            publicKey: user.public_key().to_string().into(),
+            name: user.name().into(),
+        };
+        self.blocked_users_storage
+            .lock()
+            .unwrap()
+            .insert(*user.id(), qt_user);
+        self.blockedUsersChanged();
+    }
+
+    fn get_blocked_users(&self) -> QVariantList {
+        self.blocked_users_storage
+            .lock()
+            .unwrap()
+            .values()
+            .map(|item| item.to_qvariant())
+            .collect()
     }
 }

@@ -74,6 +74,26 @@ Item {
                 }
             }
         }
+
+        Text {
+            Layout.columnSpan: 2
+            text: "Blocked Users"
+            font.bold: true
+        }
+
+        ListView {
+            Layout.columnSpan: 2
+            Layout.fillHeight: true
+            Layout.fillWidth: true
+
+            model: account.blockedUsers
+
+            delegate: Text {
+                anchors.fill: parent
+                width: 300
+                text: modelData.publicKey
+            }
+        }
     }
 }
 

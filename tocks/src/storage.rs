@@ -1,4 +1,4 @@
-use crate::contact::{Friend, Status};
+use crate::contact::{Friend, Status, User};
 
 use toxcore::{Message, PublicKey};
 
@@ -149,7 +149,8 @@ impl Storage {
                 "SELECT chat_id, friends.user_id, users.public_key, users.name, pending_friends.id \
                 FROM friends \
                 LEFT JOIN users ON friends.user_id = users.id \
-                LEFT JOIN pending_friends ON friends.user_id = pending_friends.user_id",
+                LEFT JOIN pending_friends ON friends.user_id = pending_friends.user_id \
+                WHERE friends.user_id NOT IN (SELECT user_id from blocked_users)",
             )
             .context("Failed to prepare statement to retrieve friends from DB")?;
 
@@ -323,6 +324,93 @@ impl Storage {
         Ok(UserHandle { user_id })
     }
 
+    pub fn get_user(&self, id: &UserHandle) -> Result<User> {
+        let (public_key_bytes, name) = self
+            .connection
+            .query_row(
+                "SELECT public_key, name FROM users WHERE id = ?1",
+                params![id.id()],
+                |row| {
+                    let public_key_bytes: Vec<u8> = row.get(0)?;
+                    let name: String = row.get(1)?;
+                    Ok((public_key_bytes, name))
+                },
+            )
+            .context("Failed to retrieve from users table")?;
+
+        let public_key =
+            PublicKey::from_bytes(public_key_bytes).context("Failed to parse public key")?;
+
+        Ok(User::new(*id, public_key, name))
+    }
+
+    pub fn block_user(&mut self, user_id: &UserHandle) -> Result<User> {
+        // When we block a user we add them to the blocked users table but we do
+        // not remove them from our friends table. This is important since if we
+        // ever decide to unblock them we need to be able to tie them back to their
+        // previous chat history
+
+        let blocked_id = self
+            .connection
+            .query_row(
+                "SELECT id FROM blocked_users WHERE user_id = ?1",
+                params![user_id.id()],
+                |row| {
+                    let id: i64 = row.get(0)?;
+                    Ok(id)
+                },
+            )
+            .optional()
+            .context("Failed to check if user is already blocked")?;
+
+        if blocked_id.is_some() {
+            return self.get_user(user_id);
+        }
+
+        self.connection
+            .execute(
+                "INSERT INTO blocked_users (user_id) VALUES (?1)",
+                params![user_id.id()],
+            )
+            .context("Failed to insert user into blocked_users table")?;
+
+        self.get_user(user_id)
+    }
+
+    pub fn blocked_users(&self) -> Result<Vec<User>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT users.id, users.public_key, users.name FROM users \
+            JOIN blocked_users ON users.id = blocked_users.user_id",
+            )
+            .context("Failed to prepare blocked users query")?;
+
+        let mapped_rows = statement
+            .query_map(NO_PARAMS, |row| {
+                let user_handle = UserHandle {
+                    user_id: row.get(0)?,
+                };
+                let public_key_bytes: Vec<u8> = row.get(1)?;
+                let name: String = row.get(2)?;
+
+                Ok((user_handle, public_key_bytes, name))
+            })
+            .context("Failed to parse blocked users")?;
+
+        let mut ret = Vec::new();
+        for res in mapped_rows {
+            let (user_handle, public_key_bytes, name) = res.context("Failed to parse DB row")?;
+
+            let public_key =
+                PublicKey::from_bytes(public_key_bytes).context("Failed to parse public key")?;
+
+            ret.push(User::new(user_handle, public_key, name));
+        }
+
+        Ok(ret)
+    }
+
     pub fn update_user_name(&mut self, user_handle: &UserHandle, name: &str) -> Result<()> {
         self.connection
             .execute(
@@ -471,8 +559,8 @@ impl Storage {
             .connection
             .prepare(
                 "SELECT messages.id, text_messages.message, text_messages.action \
-                FROM messages \
-                JOIN pending_messages \
+                FROM pending_messages \
+                JOIN messages \
                 ON pending_messages.message_id = messages.id \
                 JOIN text_messages \
                 ON messages.id = text_messages.message_id \
@@ -593,6 +681,16 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             NO_PARAMS,
         )
         .context("Failed to create pending_friends table")?;
+
+    transaction
+        .execute(
+            "CREATE TABLE IF NOT EXISTS blocked_users ( \
+            id INTEGER PRIMARY KEY, \
+            user_id INTEGER NOT NULL, \
+            FOREIGN KEY (user_id) REFERENCES users(id))",
+            NO_PARAMS,
+        )
+        .context("Failed to create blocked users table")?;
 
     let public_key = transaction
         .query_row(
@@ -1008,6 +1106,30 @@ mod tests {
 
         assert_eq!(friends.len(), 1);
         assert_eq!(friends[0].name(), "new test1");
+
+        Ok(())
+    }
+
+    #[test]
+    fn block_friend_request() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_pending_friend(friend_pk)?;
+
+        storage.block_user(friend.id())?;
+
+        let friends = storage.friends()?;
+
+        assert_eq!(friends.len(), 0);
+
+        let blocked_users = storage.blocked_users()?;
+
+        assert_eq!(blocked_users.len(), 1);
+        assert_eq!(friend.id(), blocked_users[0].id());
+        assert_eq!(friend.public_key(), blocked_users[0].public_key());
+        assert_eq!(friend.name(), blocked_users[0].name());
 
         Ok(())
     }

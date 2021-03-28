@@ -9,7 +9,7 @@ mod storage;
 
 pub use crate::{
     account::AccountId,
-    contact::{Friend, Status},
+    contact::{Friend, Status, User},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
@@ -33,6 +33,7 @@ pub enum TocksUiEvent {
     Close,
     CreateAccount(String /*name*/, String /*password*/),
     AcceptPendingFriend(AccountId, UserHandle),
+    BlockUser(AccountId, UserHandle),
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
@@ -44,6 +45,8 @@ pub enum TocksEvent {
     AccountListLoaded(Vec<String>),
     AccountLoggedIn(AccountId, UserHandle, ToxId, String),
     FriendAdded(AccountId, Friend),
+    FriendRemoved(AccountId, UserHandle),
+    BlockedUserAdded(AccountId, User),
     MessagesLoaded(AccountId, ChatHandle, Vec<ChatLogEntry>),
     MessageInserted(AccountId, ChatHandle, ChatLogEntry),
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
@@ -139,11 +142,39 @@ impl Tocks {
                     Some(account) => {
                         let friend = account
                             .add_pending_friend(&user_handle)
-                            .context("Failed to add tox friend by public key")?;
+                            .context("Failed to add pending tox friend")?;
 
                         Self::send_tocks_event(
                             &self.tocks_event_tx,
-                            TocksEvent::FriendAdded(account_id, friend.clone()),
+                            TocksEvent::FriendStatusChanged(
+                                account_id,
+                                *friend.id(),
+                                *friend.status(),
+                            ),
+                        );
+                    }
+                    None => {
+                        error!("Account {} not present", account_id);
+                    }
+                }
+            }
+            TocksUiEvent::BlockUser(account_id, user_handle) => {
+                let account = self.account_manager.get_mut(&account_id);
+
+                match account {
+                    Some(account) => {
+                        let blocked_user = account
+                            .block_user(&user_handle)
+                            .context("Failed to reject pending friend")?;
+
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::FriendRemoved(account_id, user_handle),
+                        );
+
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::BlockedUserAdded(account_id, blocked_user),
                         );
                     }
                     None => {
@@ -178,6 +209,13 @@ impl Tocks {
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
                         TocksEvent::FriendAdded(account_id, friend.clone()),
+                    );
+                }
+
+                for user in account.blocked_users()? {
+                    Self::send_tocks_event(
+                        &self.tocks_event_tx,
+                        TocksEvent::BlockedUserAdded(account_id, user),
                     );
                 }
             }

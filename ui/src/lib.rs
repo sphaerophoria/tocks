@@ -152,6 +152,7 @@ struct QTocks {
     newAccount: qt_method!(fn(&self, name: QString, password: QString)),
     close: qt_method!(fn(&self)),
     addPendingFriend: qt_method!(fn(&self, account: i64, user: i64)),
+    blockUser: qt_method!(fn(&self, account: i64, user: i64)),
     login: qt_method!(fn(&self, account_name: QString, password: QString)),
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
@@ -178,6 +179,7 @@ impl QTocks {
             newAccount: Default::default(),
             close: Default::default(),
             addPendingFriend: Default::default(),
+            blockUser: Default::default(),
             login: Default::default(),
             sendMessage: Default::default(),
             updateChatModel: Default::default(),
@@ -199,6 +201,14 @@ impl QTocks {
         self.send_ui_request(TocksUiEvent::AcceptPendingFriend(
             AccountId::from(account),
             UserHandle::from(friend),
+        ));
+    }
+
+    #[allow(non_snake_case)]
+    fn blockUser(&self, account: i64, user: i64) {
+        self.send_ui_request(TocksUiEvent::BlockUser(
+            AccountId::from(account),
+            UserHandle::from(user),
         ));
     }
 
@@ -292,6 +302,24 @@ impl QTocks {
                     .unwrap()
                     .borrow()
                     .add_friend(&friend);
+            }
+            TocksEvent::BlockedUserAdded(account, user) => {
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account)
+                    .unwrap()
+                    .borrow()
+                    .add_blocked_user(&user);
+            }
+            TocksEvent::FriendRemoved(account, user_id) => {
+                self.accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account)
+                    .unwrap()
+                    .borrow()
+                    .remove_friend(user_id);
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
                 self.chat_model

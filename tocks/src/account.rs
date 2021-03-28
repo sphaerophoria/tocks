@@ -1,5 +1,5 @@
 use crate::{
-    contact::{Friend, Status, UserManager},
+    contact::{Friend, Status, User, UserManager},
     savemanager::SaveManager,
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
     Event, TocksEvent, APP_DIRS,
@@ -115,9 +115,21 @@ impl Account {
         self.user_manager.friends()
     }
 
+    pub fn blocked_users(&self) -> Result<impl Iterator<Item = User>> {
+        Ok(self
+            .storage
+            .blocked_users()
+            .context("Failed to retrieve blocked users")?
+            .into_iter())
+    }
+
     pub fn add_pending_friend(&mut self, friend_id: &UserHandle) -> Result<&Friend> {
         let bundle = self.user_manager.friend_by_user_handle(&friend_id);
         let friend = &mut bundle.friend;
+
+        if *friend.status() != Status::Pending {
+            return Ok(friend);
+        }
 
         bundle.tox_friend = Some(
             self.tox
@@ -136,6 +148,24 @@ impl Account {
             .context("Failed to save tox data after adding friend")?;
 
         Ok(friend)
+    }
+
+    pub fn block_user(&mut self, user_id: &UserHandle) -> Result<User> {
+        let friend_bundle = &self.user_manager.friend_by_user_handle(&user_id);
+        let tox_friend = &friend_bundle.tox_friend;
+
+        if let Some(_tox_friend) = tox_friend {
+            // In order to block an accepted friend we need to support friend
+            // removal in toxcore
+            unimplemented!();
+        }
+
+        let user = self
+            .storage
+            .block_user(user_id)
+            .context("Failed to remove user from DB")?;
+
+        Ok(user)
     }
 
     pub fn send_message(
@@ -206,6 +236,8 @@ impl Account {
                     .context("Failed to propagate received message")?;
             }
             CoreEvent::FriendRequest(request) => {
+                // FIXME: reject incoming request if the user is blocked
+
                 let friend: Friend = self
                     .storage
                     .add_pending_friend(request.public_key)
@@ -298,6 +330,7 @@ impl Account {
 
         Ok(())
     }
+
     pub(crate) async fn run(&mut self) {
         loop {
             tokio::select! {
