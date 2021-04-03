@@ -368,8 +368,7 @@ impl AudioManager {
     pub fn play_formatted_audio(&mut self, container: FormattedAudio) {
         match container {
             FormattedAudio::Mp3(data) => {
-                let notification_handle =
-                    self.create_playback_channel(50).unwrap();
+                let notification_handle = self.create_playback_channel(50).unwrap();
 
                 let mut mp3_decoder = minimp3::Decoder::new(&data[..]);
 

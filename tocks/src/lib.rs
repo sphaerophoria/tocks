@@ -280,9 +280,7 @@ impl Tocks {
                     error!("Could not find account {}", account_id.id());
                 }
             }
-            TocksUiEvent::PlaySound(audio) => {
-                self.audio_manager.play_formatted_audio(audio)
-            },
+            TocksUiEvent::PlaySound(audio) => self.audio_manager.play_formatted_audio(audio),
             TocksUiEvent::AudioDeviceSelected(device) => {
                 self.audio_manager
                     .set_output_device(device)

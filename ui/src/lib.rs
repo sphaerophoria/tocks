@@ -4,8 +4,8 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    AccountId, AudioDevice, FormattedAudio, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
-    TocksUiEvent, UserHandle,
+    AccountId, AudioDevice, ChatHandle, ChatLogEntry, ChatMessageId, FormattedAudio, Status,
+    TocksEvent, TocksUiEvent, UserHandle,
 };
 
 use toxcore::{Message, ToxId};
@@ -403,7 +403,9 @@ impl QTocks {
                         .read_to_end(&mut notification_data)
                         .unwrap();
 
-                    self.send_ui_request(TocksUiEvent::PlaySound(FormattedAudio::Mp3(notification_data)))
+                    self.send_ui_request(TocksUiEvent::PlaySound(FormattedAudio::Mp3(
+                        notification_data,
+                    )))
                 }
 
                 if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
