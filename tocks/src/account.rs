@@ -523,7 +523,10 @@ fn create_tox(
 
     let builder = match savedata {
         Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
-        _ => builder,
+        Err(e) => {
+            error!("Failed to load tox save: {:?}", e);
+            builder
+        }
     };
 
     let tox = builder
