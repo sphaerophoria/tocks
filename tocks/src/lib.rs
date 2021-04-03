@@ -4,18 +4,23 @@
 pub mod contact;
 
 mod account;
+mod audio;
 mod savemanager;
 mod storage;
 
 pub use crate::{
     account::AccountId,
+    audio::FormattedAudio,
     contact::{Friend, Status, User},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
 use anyhow::{Context, Result};
 
-use crate::account::{Account, AccountManager};
+use crate::{
+    account::{Account, AccountManager},
+    audio::AudioManager,
+};
 
 use toxcore::ToxId;
 
@@ -37,6 +42,7 @@ pub enum TocksUiEvent {
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
+    PlaySound(FormattedAudio),
 }
 
 // Things external observers (like the UI) may want to observe
@@ -69,6 +75,7 @@ impl From<TocksEvent> for Event {
 
 pub struct Tocks {
     account_manager: AccountManager,
+    audio_manager: AudioManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
     tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
 }
@@ -80,6 +87,9 @@ impl Tocks {
     ) -> Tocks {
         let tocks = Tocks {
             account_manager: AccountManager::new(),
+            // FIXME: better error handling
+            // FIXME: initialize audiomanager with saved output device
+            audio_manager: AudioManager::new().expect("Failed to start audio manager"),
             ui_event_rx,
             tocks_event_tx,
         };
@@ -258,6 +268,9 @@ impl Tocks {
                     error!("Could not find account {}", account_id.id());
                 }
             }
+            TocksUiEvent::PlaySound(audio) => {
+                self.audio_manager.play_formatted_audio(audio)
+            },
         };
 
         Ok(false)
@@ -297,7 +310,8 @@ impl Tocks {
                     },
                 }
             },
-            event = accounts.run() => { event }
+            _ = self.audio_manager.run() => { unreachable!() },
+            event = accounts.run() => { event },
         };
 
         event

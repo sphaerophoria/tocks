@@ -4,3 +4,6 @@
 [submodule "toxcore-sys/src/c-toxcore"]
 	path = toxcore-sys/src/c-toxcore
 	url = https://github.com/toktok/c-toxcore
+[submodule "openal-sys/src/openal-soft"]
+	path = openal-sys/src/openal-soft
+	url = https://github.com/kcat/openal-soft

@@ -4,8 +4,8 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent, TocksUiEvent,
-    UserHandle,
+    AccountId, FormattedAudio, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
+    TocksUiEvent, UserHandle,
 };
 
 use toxcore::{Message, ToxId};
@@ -15,13 +15,24 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use std::{
     cell::RefCell,
     collections::HashMap,
-    sync::{Arc, Barrier, RwLock},
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Barrier, RwLock,
+    },
     thread::JoinHandle,
 };
 
 use ::log::*;
 
 use qmetaobject::*;
+
+fn resource_path<P: AsRef<Path>>(relative_path: P) -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.join(relative_path.as_ref())
+}
 
 #[derive(QObject, Default)]
 #[allow(non_snake_case)]
@@ -157,12 +168,14 @@ struct QTocks {
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
     error: qt_signal!(error: QString),
+    visible: qt_property!(bool; WRITE set_visible),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
     tocks_event_rx: UnboundedReceiver<TocksEvent>,
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
     offline_accounts: RwLock<Vec<String>>,
+    visible_atomic: AtomicBool,
 }
 
 impl QTocks {
@@ -184,11 +197,13 @@ impl QTocks {
             sendMessage: Default::default(),
             updateChatModel: Default::default(),
             error: Default::default(),
+            visible: Default::default(),
             ui_requests_tx,
             tocks_event_rx,
             chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
+            visible_atomic: AtomicBool::new(false),
         }
     }
 
@@ -287,6 +302,10 @@ impl QTocks {
         }
     }
 
+    fn set_visible(&self, visible: bool) {
+        self.visible_atomic.store(visible, Ordering::Relaxed);
+    }
+
     fn handle_ui_callback(&self, event: TocksEvent) {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
@@ -330,6 +349,27 @@ impl QTocks {
             TocksEvent::MessageInserted(account, chat, entry) => {
                 let chat_model_pinned = self.chat_model.pinned();
                 let mut chat_model_ref = chat_model_pinned.borrow_mut();
+
+                let self_id = self
+                    .accounts_storage
+                    .read()
+                    .unwrap()
+                    .get(&account)
+                    .unwrap()
+                    .borrow()
+                    .self_id();
+
+                if *entry.sender() != self_id && !self.visible_atomic.load(Ordering::Relaxed) {
+                    let mut notification_data = Vec::new();
+                    // FIXME: better error handling
+                    File::open(resource_path("qml/res/incoming_message.mp3"))
+                        .unwrap()
+                        .read_to_end(&mut notification_data)
+                        .unwrap();
+
+                    self.send_ui_request(TocksUiEvent::PlaySound(FormattedAudio::Mp3(notification_data)))
+                }
+
                 if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
                     chat_model_ref.push_message(entry);
                 }

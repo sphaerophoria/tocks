@@ -1,0 +1,11 @@
+[package]
+name = "openal-sys"
+version = "0.1.0"
+authors = ["Mick Sayson <mick@sayson.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+bindgen = "0.57.0"
+cmake = "0.1.45"

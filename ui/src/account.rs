@@ -97,6 +97,10 @@ impl Account {
         self.blockedUsersChanged();
     }
 
+    pub fn self_id(&self) -> UserHandle {
+        UserHandle::from(self.userId)
+    }
+
     fn get_blocked_users(&self) -> QVariantList {
         self.blocked_users_storage
             .lock()

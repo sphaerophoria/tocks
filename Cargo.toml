@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+	"openal-sys",
 	"toxcore-sys",
 	"toxcore",
 	"tocks",
