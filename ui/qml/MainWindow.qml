@@ -60,9 +60,8 @@ RowLayout  {
 
     Component {
         id: settingsPage
-        Rectangle {
+        GlobalSettingsPage {
             anchors.fill: parent
-            color: "black"
         }
     }
 

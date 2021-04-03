@@ -10,7 +10,7 @@ mod storage;
 
 pub use crate::{
     account::AccountId,
-    audio::FormattedAudio,
+    audio::{AudioDevice, FormattedAudio},
     contact::{Friend, Status, User},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
@@ -43,6 +43,7 @@ pub enum TocksUiEvent {
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
     PlaySound(FormattedAudio),
+    AudioDeviceSelected(AudioDevice),
 }
 
 // Things external observers (like the UI) may want to observe
@@ -58,6 +59,7 @@ pub enum TocksEvent {
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
     FriendStatusChanged(AccountId, UserHandle, Status),
     UserNameChanged(AccountId, UserHandle, String),
+    AudioDeviceAdded(AudioDevice),
 }
 
 // Things that Tocks can handle in it's core iteration loop
@@ -85,7 +87,7 @@ impl Tocks {
         ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
         tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
     ) -> Tocks {
-        let tocks = Tocks {
+        let mut tocks = Tocks {
             account_manager: AccountManager::new(),
             // FIXME: better error handling
             // FIXME: initialize audiomanager with saved output device
@@ -103,6 +105,16 @@ impl Tocks {
             &tocks.tocks_event_tx,
             TocksEvent::AccountListLoaded(account_list),
         );
+
+        // FIXME: dynamically detect changes and add to outputs
+        // FIXME: better error handling
+        for device in tocks
+            .audio_manager
+            .output_devices()
+            .expect("Failed to retrieve audio devices")
+        {
+            Self::send_tocks_event(&tocks.tocks_event_tx, TocksEvent::AudioDeviceAdded(device))
+        }
 
         tocks
     }
@@ -271,6 +283,11 @@ impl Tocks {
             TocksUiEvent::PlaySound(audio) => {
                 self.audio_manager.play_formatted_audio(audio)
             },
+            TocksUiEvent::AudioDeviceSelected(device) => {
+                self.audio_manager
+                    .set_output_device(device)
+                    .context("Failed to set audio output device")?;
+            }
         };
 
         Ok(false)

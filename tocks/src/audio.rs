@@ -9,13 +9,25 @@ use thiserror::Error;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use std::{collections::VecDeque, ffi::c_void, ptr::NonNull, sync::Mutex, time::Duration};
+use std::{
+    collections::VecDeque,
+    ffi::{c_void, CStr, CString},
+    ptr::NonNull,
+    sync::Mutex,
+    time::Duration,
+};
 
 lazy_static! {
     // openal seems to be quite stateful. We have to guarantee that another
     // instance of our class will not call OAL functions again. This guard
     // ensures that only one instance of AudioManager can be constructed
     static ref SINGLE_INSTANCE_GUARD: Mutex<bool> = Mutex::new(false);
+}
+
+extern "C" {
+    // In progress API to migrate a device. This is not yet exposed in the
+    // public header. See https://github.com/kcat/openal-soft/issues/533
+    fn alcReopenDeviceSOFT(device: *mut oal::ALCdevice, deviceName: *const i8, attribs: *const i32);
 }
 
 #[derive(Error, Debug)]
@@ -200,6 +212,21 @@ impl Drop for OalSource {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum AudioDevice {
+    Default,
+    Named(String),
+}
+
+impl ToString for AudioDevice {
+    fn to_string(&self) -> String {
+        match self {
+            AudioDevice::Default => "Default".to_string(),
+            AudioDevice::Named(s) => s.clone(),
+        }
+    }
+}
+
 pub enum FormattedAudio {
     Mp3(Vec<u8>),
 }
@@ -278,6 +305,51 @@ impl AudioManager {
 
             Ok(audio_manager)
         }
+    }
+
+    pub fn output_devices(&mut self) -> Result<Vec<AudioDevice>> {
+        unsafe {
+            let mut ret = vec![AudioDevice::Default];
+
+            let mut devices =
+                oal::alcGetString(std::ptr::null_mut(), oal::ALC_ALL_DEVICES_SPECIFIER as i32);
+            while *devices != 0 {
+                let device_cstr = CStr::from_ptr(devices);
+                let device_str = device_cstr
+                    .to_str()
+                    .context("Audio device was not a valid Utf8 string")?;
+                devices = devices.add(device_cstr.to_bytes_with_nul().len());
+                ret.push(AudioDevice::Named(device_str.to_string()));
+            }
+
+            Ok(ret)
+        }
+    }
+
+    pub fn set_output_device(&mut self, device: AudioDevice) -> Result<()> {
+        unsafe {
+            match device {
+                AudioDevice::Default => {
+                    alcReopenDeviceSOFT(
+                        self.device_handle.as_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                    );
+                }
+                AudioDevice::Named(name) => {
+                    let name_cstr = CString::new(name).context("Device name invalid")?;
+                    alcReopenDeviceSOFT(
+                        self.device_handle.as_ptr(),
+                        name_cstr.as_ptr(),
+                        std::ptr::null(),
+                    )
+                }
+            }
+        }
+
+        oal_result().context("Failed to switch output device")?;
+
+        Ok(())
     }
 
     pub fn create_playback_channel(

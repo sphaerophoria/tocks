@@ -35,6 +35,7 @@ ComboBox {
 
         text: control.displayText
         font: control.font
+        elide: Text.ElideRight
         color: Colors.buttonText
         verticalAlignment: Text.AlignVCenter
     }

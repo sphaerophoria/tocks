@@ -18,6 +18,10 @@ ApplicationWindow {
 
     color: Colors.background
 
+    onActiveFocusControlChanged: {
+        tocks.visible = activeFocusControl !== null
+    }
+
 
     Connections {
         target: tocks

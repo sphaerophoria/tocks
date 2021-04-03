@@ -4,7 +4,7 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    AccountId, FormattedAudio, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
+    AccountId, AudioDevice, FormattedAudio, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
     TocksUiEvent, UserHandle,
 };
 
@@ -168,6 +168,9 @@ struct QTocks {
     updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
     error: qt_signal!(error: QString),
+    audioOutputs: qt_property!(QVariantList; READ get_audio_outputs NOTIFY audioOutputsChanged),
+    audioOutputsChanged: qt_signal!(),
+    setAudioOutput: qt_method!(fn(&self, output_idx: i64)),
     visible: qt_property!(bool; WRITE set_visible),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
@@ -175,6 +178,7 @@ struct QTocks {
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
     offline_accounts: RwLock<Vec<String>>,
+    audio_output_storage: RwLock<Vec<AudioDevice>>,
     visible_atomic: AtomicBool,
 }
 
@@ -197,12 +201,16 @@ impl QTocks {
             sendMessage: Default::default(),
             updateChatModel: Default::default(),
             error: Default::default(),
+            audioOutputs: Default::default(),
+            audioOutputsChanged: Default::default(),
+            setAudioOutput: Default::default(),
             visible: Default::default(),
             ui_requests_tx,
             tocks_event_rx,
             chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
+            audio_output_storage: Default::default(),
             visible_atomic: AtomicBool::new(false),
         }
     }
@@ -302,6 +310,34 @@ impl QTocks {
         }
     }
 
+    fn get_audio_outputs(&self) -> QVariantList {
+        self.audio_output_storage
+            .read()
+            .unwrap()
+            .iter()
+            .map(|device| QString::from(device.to_string()).to_qvariant())
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    fn setAudioOutput(&self, idx: i64) {
+        let device = self
+            .audio_output_storage
+            .read()
+            .unwrap()
+            .get(idx as usize)
+            .cloned()
+            .expect("Invalid audio device id passed from qml");
+
+        self.send_ui_request(TocksUiEvent::AudioDeviceSelected(device));
+    }
+
+    fn add_audio_output(&self, device: AudioDevice) {
+        self.audio_output_storage.write().unwrap().push(device);
+
+        self.audioOutputsChanged();
+    }
+
     fn set_visible(&self, visible: bool) {
         self.visible_atomic.store(visible, Ordering::Relaxed);
     }
@@ -398,6 +434,9 @@ impl QTocks {
                     .unwrap()
                     .borrow()
                     .set_user_name(user_id, &name);
+            }
+            TocksEvent::AudioDeviceAdded(device) => {
+                self.add_audio_output(device);
             }
         }
     }
