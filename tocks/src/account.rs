@@ -15,7 +15,7 @@ use log::*;
 use platform_dirs::AppDirs;
 use tokio::sync::mpsc;
 
-use std::{collections::HashMap, fmt, fs, path::PathBuf};
+use std::{collections::HashMap, fmt, fs, io::ErrorKind, path::PathBuf};
 
 lazy_static! {
     pub static ref TOX_SAVE_DIR: PathBuf = AppDirs::new(Some("tox"), false).unwrap().config_dir;
@@ -514,6 +514,20 @@ fn create_save_manager(account_name: String, password: &str) -> Result<SaveManag
     Ok(save_manager)
 }
 
+fn handle_savedata_failure(savedata: Result<Vec<u8>>) -> Result<Option<Vec<u8>>> {
+    match savedata {
+        Ok(d) => Ok(Some(d)),
+        Err(e) => {
+            if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                if io_err.kind() == ErrorKind::NotFound {
+                    return Ok(None);
+                }
+            }
+            Err(e).context("Failed to load tox save")
+        }
+    }
+}
+
 fn create_tox(
     savedata: Result<Vec<u8>>,
 ) -> Result<(Tox, mpsc::UnboundedReceiver<toxcore::Event>), Error> {
@@ -521,12 +535,11 @@ fn create_tox(
 
     let builder = Tox::builder()?;
 
+    let savedata = handle_savedata_failure(savedata)?;
+
     let builder = match savedata {
-        Ok(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
-        Err(e) => {
-            error!("Failed to load tox save: {:?}", e);
-            builder
-        }
+        Some(d) => builder.savedata(toxcore::SaveData::ToxSave(d)),
+        None => builder,
     };
 
     let tox = builder
