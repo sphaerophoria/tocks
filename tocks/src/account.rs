@@ -171,8 +171,9 @@ impl Account {
         &mut self,
         chat_handle: &ChatHandle,
         message: String,
-    ) -> Result<ChatLogEntry> {
-        let message = Message::Normal(message);
+    ) -> Result<Vec<ChatLogEntry>> {
+        let messages = crate::message_parser::parse(message, self.tox.max_message_length())
+            .context("Failed to parse input message")?;
 
         let tox_friend = self
             .user_manager
@@ -186,28 +187,41 @@ impl Account {
 
         let tox_friend = tox_friend.unwrap();
 
-        let mut chat_log_entry = self
-            .storage
-            .push_message(chat_handle, self.user_handle, message)
-            .context("Failed to insert message into storage")?;
+        let mut ret = Vec::new();
 
-        chat_log_entry.set_complete(false);
+        for message in messages {
+            // Attempt to send the message to toxcore first. This ensures that we do
+            // not store a message in the DB that is not sendable
+            let receipt = if tox_friend.status() != ToxStatus::Offline {
+                Some(
+                    self.tox
+                        .send_message(&tox_friend, &message)
+                        .context("Failed to send message to tox friend")?,
+                )
+            } else {
+                None
+            };
 
-        self.storage
-            .add_unresolved_message(chat_log_entry.id())
-            .context("Failed to flag message as un-delivered in storage")?;
+            let mut chat_log_entry = self
+                .storage
+                .push_message(chat_handle, self.user_handle, message)
+                .context("Failed to insert message into storage")?;
 
-        if tox_friend.status() != ToxStatus::Offline {
-            let receipt = self
-                .tox
-                .send_message(&tox_friend, chat_log_entry.message())
-                .context("Failed to send message to tox friend")?;
+            chat_log_entry.set_complete(false);
 
-            self.outgoing_messages
-                .insert(receipt, (*chat_handle, *chat_log_entry.id()));
+            self.storage
+                .add_unresolved_message(chat_log_entry.id())
+                .context("Failed to flag message as un-delivered in storage")?;
+
+            if let Some(receipt) = receipt {
+                self.outgoing_messages
+                    .insert(receipt, (*chat_handle, *chat_log_entry.id()));
+            }
+
+            ret.push(chat_log_entry);
         }
 
-        Ok(chat_log_entry)
+        Ok(ret)
     }
 
     // FIXME: In the future this API should support some bounds on which segment

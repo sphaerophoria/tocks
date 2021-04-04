@@ -135,6 +135,10 @@ impl Tox {
     pub fn get_savedata(&self) -> Vec<u8> {
         self.inner.get_savedata()
     }
+
+    pub fn max_message_length(&self) -> usize {
+        self.inner.max_message_length()
+    }
 }
 
 /// Wrapper struct to help us manage mutability of the interior tox pointer
@@ -372,6 +376,10 @@ impl<Api: ToxApi> ToxImpl<Api> {
             data.set_len(data_size);
             data
         }
+    }
+
+    pub fn max_message_length(&self) -> usize {
+        unsafe { self.api.max_message_length() as usize }
     }
 
     /// Calls into toxcore to get the public key for the provided friend id

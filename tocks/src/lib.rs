@@ -5,6 +5,7 @@ pub mod contact;
 
 mod account;
 mod audio;
+mod message_parser;
 mod savemanager;
 mod storage;
 
@@ -245,20 +246,23 @@ impl Tocks {
                 let account = self.account_manager.get_mut(&account_id);
 
                 if let Some(account) = account {
-                    let entry = account
-                        .send_message(&chat_handle, message)
-                        .with_context(|| {
-                            format!(
-                                "Failed to send message to {} on account {}",
-                                chat_handle.id(),
-                                account_id.id()
-                            )
-                        })?;
+                    let entries =
+                        account
+                            .send_message(&chat_handle, message)
+                            .with_context(|| {
+                                format!(
+                                    "Failed to send message to {} on account {}",
+                                    chat_handle.id(),
+                                    account_id.id()
+                                )
+                            })?;
 
-                    Self::send_tocks_event(
-                        &self.tocks_event_tx,
-                        TocksEvent::MessageInserted(account_id, chat_handle, entry),
-                    );
+                    for entry in entries {
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::MessageInserted(account_id, chat_handle, entry),
+                        );
+                    }
                 } else {
                     error!(
                         "Could not send to {} from {}",

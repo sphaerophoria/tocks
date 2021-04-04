@@ -61,6 +61,7 @@ pub trait ToxApi: Send + Sync {
         name: *mut u8,
         error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> bool;
+    unsafe fn max_message_length(&self) -> u32;
     unsafe fn friend_send_message(
         &self,
         tox: *mut toxcore_sys::Tox,
@@ -225,6 +226,10 @@ impl ToxApi for ToxApiImpl {
         error: *mut TOX_ERR_FRIEND_QUERY,
     ) -> bool {
         tox_friend_get_name(tox, friend_number, name, error)
+    }
+
+    unsafe fn max_message_length(&self) -> u32 {
+        tox_max_message_length()
     }
 
     unsafe fn friend_send_message(
