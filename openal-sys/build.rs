@@ -21,6 +21,7 @@ fn main() {
         lib_search_path.display()
     );
     println!("cargo:rustc-link-lib=static=openal");
+    println!("cargo:rustc-link-lib=dylib=stdc++");
 
     let mut al_header: PathBuf = include_path.clone();
     al_header.push("al.h");
