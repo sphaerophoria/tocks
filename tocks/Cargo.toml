@@ -22,3 +22,5 @@ tokio = { version = "1.2.0", features = ["sync"] }
 toxcore = { path = "../toxcore" }
 openal-sys = { path = "../openal-sys" }
 minimp3 = "0.5.1"
+mockall_double = "0.2.0"
+rusty-fork = "0.3.0"

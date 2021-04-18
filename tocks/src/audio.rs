@@ -9,6 +9,52 @@ use thiserror::Error;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+#[cfg_attr(test, mockall::automock)]
+mod oal_func_impl {
+
+    use std::ffi::c_void;
+
+    use openal_sys as oal;
+
+    extern "C" {
+        pub fn alGenSources(n: i32, sources: *mut u32);
+        pub fn alDeleteSources(n: i32, sources: *const u32);
+        pub fn alBufferData(buffer: u32, format: i32, data: *const c_void, size: i32, from: i32);
+
+        pub fn alGenBuffers(n: i32, buffers: *mut u32);
+        pub fn alDeleteBuffers(n: i32, buffers: *const u32);
+        pub fn alSourceQueueBuffers(source: u32, nb: i32, buffers: *const u32);
+        pub fn alSourceUnqueueBuffers(source: u32, nb: i32, buffers: *mut u32);
+
+        pub fn alSourcePlay(source: u32);
+        pub fn alGetSourcei(source: u32, param: i32, value: *mut i32);
+
+        pub fn alGetError() -> i32;
+
+        pub fn alcCreateContext(
+            device: *mut oal::ALCdevice,
+            attrlist: *const i32,
+        ) -> *mut oal::ALCcontext;
+        pub fn alcMakeContextCurrent(context: *mut oal::ALCcontext) -> bool;
+        pub fn alcDestroyContext(context: *mut oal::ALCcontext);
+        pub fn alcGetString(device: *mut oal::ALCdevice, param: i32) -> *const i8;
+
+        pub fn alcOpenDevice(devicename: *const i8) -> *mut oal::ALCdevice;
+        pub fn alcCloseDevice(device: *mut oal::ALCdevice) -> bool;
+
+        // In progress API to migrate a device. This is not yet exposed in the
+        // public header. See https://github.com/kcat/openal-soft/issues/533
+        pub fn alcReopenDeviceSOFT(
+            device: *mut oal::ALCdevice,
+            deviceName: *const i8,
+            attribs: *const i32,
+        );
+    }
+}
+
+#[mockall_double::double]
+use oal_func_impl as oal_func;
+
 use std::{
     collections::VecDeque,
     ffi::{c_void, CStr, CString},
@@ -22,12 +68,6 @@ lazy_static! {
     // instance of our class will not call OAL functions again. This guard
     // ensures that only one instance of AudioManager can be constructed
     static ref SINGLE_INSTANCE_GUARD: Mutex<bool> = Mutex::new(false);
-}
-
-extern "C" {
-    // In progress API to migrate a device. This is not yet exposed in the
-    // public header. See https://github.com/kcat/openal-soft/issues/533
-    fn alcReopenDeviceSOFT(device: *mut oal::ALCdevice, deviceName: *const i8, attribs: *const i32);
 }
 
 #[derive(Error, Debug)]
@@ -81,13 +121,13 @@ impl OalSource {
         unsafe {
             let mut source = 0u32;
 
-            oal::alGenSources(1, &mut source);
+            oal_func::alGenSources(1, &mut source);
             oal_result().context("Failed to generate source")?;
 
             debug!("Allocated OpenAL source {}", source);
 
             let mut buffers = Vec::with_capacity(num_buffers);
-            oal::alGenBuffers(num_buffers as i32, buffers.as_mut_ptr());
+            oal_func::alGenBuffers(num_buffers as i32, buffers.as_mut_ptr());
             oal_result().context("Failed to generate buffers")?;
             buffers.set_len(num_buffers);
 
@@ -114,7 +154,7 @@ impl OalSource {
                     AudioData::Stereo16(data) => (data.as_ptr() as *const c_void, data.len() * 2),
                 };
 
-                oal::alBufferData(
+                oal_func::alBufferData(
                     *bufid,
                     frame.data.get_oal_format(),
                     data_ptr,
@@ -126,7 +166,7 @@ impl OalSource {
 
                 debug!("Queuing buffer {} onto source {}", bufid, self.source);
 
-                oal::alSourceQueueBuffers(self.source, 1, bufid);
+                oal_func::alSourceQueueBuffers(self.source, 1, bufid);
                 oal_result().context("Failed to queue buffer on source")?;
             }
         } else {
@@ -139,7 +179,7 @@ impl OalSource {
         unsafe {
             if !self.playing()? {
                 debug!("Starting audio source {}", self.source);
-                oal::alSourcePlay(self.source);
+                oal_func::alSourcePlay(self.source);
                 oal_result().context("Failed to play source")?;
             }
         }
@@ -150,7 +190,7 @@ impl OalSource {
     fn playing(&self) -> Result<bool> {
         unsafe {
             let mut source_state = oal::AL_STOPPED as i32;
-            oal::alGetSourcei(self.source, oal::AL_SOURCE_STATE as i32, &mut source_state);
+            oal_func::alGetSourcei(self.source, oal::AL_SOURCE_STATE as i32, &mut source_state);
             oal_result().context("Failed to get source state")?;
 
             Ok(source_state == oal::AL_PLAYING as i32)
@@ -160,12 +200,16 @@ impl OalSource {
     fn reclaim_processed_buffers(&mut self) -> Result<()> {
         unsafe {
             let mut num_processed_buffers = 0;
-            oal::alGetSourcei(
+            oal_func::alGetSourcei(
                 self.source,
                 oal::AL_BUFFERS_PROCESSED as i32,
                 &mut num_processed_buffers,
             );
             oal_result().context("Failed to get number of processed buffers")?;
+
+            if num_processed_buffers == 0 {
+                return Ok(());
+            }
 
             for _ in 0..num_processed_buffers {
                 let bufid = self
@@ -179,7 +223,7 @@ impl OalSource {
             }
 
             let start_reclaim_index = self.available_buffers.len() - num_processed_buffers as usize;
-            oal::alSourceUnqueueBuffers(
+            oal_func::alSourceUnqueueBuffers(
                 self.source,
                 num_processed_buffers,
                 self.available_buffers[start_reclaim_index..].as_mut_ptr(),
@@ -195,12 +239,12 @@ impl Drop for OalSource {
     fn drop(&mut self) {
         info!("Dropping audio source {}", self.source);
         unsafe {
-            oal::alDeleteSources(1, &self.source);
-            oal::alDeleteBuffers(
+            oal_func::alDeleteSources(1, &self.source);
+            oal_func::alDeleteBuffers(
                 self.processing_buffers.len() as i32,
                 self.processing_buffers.make_contiguous().as_ptr(),
             );
-            oal::alDeleteBuffers(
+            oal_func::alDeleteBuffers(
                 self.available_buffers.len() as i32,
                 self.available_buffers.as_ptr(),
             );
@@ -283,14 +327,14 @@ impl AudioManager {
             *audio_manager_constructed = true;
 
             // Clear OpenAL error state
-            oal::alGetError();
+            oal_func::alGetError();
 
             // FIXME: Read device handle from storage
-            let device_handle = NonNull::new(oal::alcOpenDevice(std::ptr::null()))
+            let device_handle = NonNull::new(oal_func::alcOpenDevice(std::ptr::null()))
                 .context("OpenAL returned null device pointer")?;
 
-            let alc_context = oal::alcCreateContext(device_handle.as_ptr(), std::ptr::null());
-            oal::alcMakeContextCurrent(alc_context);
+            let alc_context = oal_func::alcCreateContext(device_handle.as_ptr(), std::ptr::null());
+            oal_func::alcMakeContextCurrent(alc_context);
 
             oal_result().context("Failed to create audio context")?;
 
@@ -312,7 +356,7 @@ impl AudioManager {
             let mut ret = vec![AudioDevice::Default];
 
             let mut devices =
-                oal::alcGetString(std::ptr::null_mut(), oal::ALC_ALL_DEVICES_SPECIFIER as i32);
+                oal_func::alcGetString(std::ptr::null_mut(), oal::ALC_ALL_DEVICES_SPECIFIER as i32);
             while *devices != 0 {
                 let device_cstr = CStr::from_ptr(devices);
                 let device_str = device_cstr
@@ -330,7 +374,7 @@ impl AudioManager {
         unsafe {
             match device {
                 AudioDevice::Default => {
-                    alcReopenDeviceSOFT(
+                    oal_func::alcReopenDeviceSOFT(
                         self.device_handle.as_ptr(),
                         std::ptr::null(),
                         std::ptr::null(),
@@ -338,7 +382,7 @@ impl AudioManager {
                 }
                 AudioDevice::Named(name) => {
                     let name_cstr = CString::new(name).context("Device name invalid")?;
-                    alcReopenDeviceSOFT(
+                    oal_func::alcReopenDeviceSOFT(
                         self.device_handle.as_ptr(),
                         name_cstr.as_ptr(),
                         std::ptr::null(),
@@ -470,9 +514,9 @@ impl Drop for AudioManager {
         let mut audio_manager_constructed = SINGLE_INSTANCE_GUARD.lock().unwrap();
 
         unsafe {
-            oal::alcMakeContextCurrent(std::ptr::null_mut());
-            oal::alcDestroyContext(self.alc_context.as_ptr());
-            oal::alcCloseDevice(self.device_handle.as_ptr());
+            oal_func::alcMakeContextCurrent(std::ptr::null_mut());
+            oal_func::alcDestroyContext(self.alc_context.as_ptr());
+            oal_func::alcCloseDevice(self.device_handle.as_ptr());
         }
 
         *audio_manager_constructed = false;
@@ -481,11 +525,168 @@ impl Drop for AudioManager {
 
 fn oal_result() -> Result<()> {
     unsafe {
-        let err = oal::alGetError() as u32;
+        let err = oal_func::alGetError() as u32;
         if err == oal::AL_NO_ERROR {
             return Ok(());
         }
 
         Err(OalError::from(err).into())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use rusty_fork::rusty_fork_test;
+    use std::sync::{Arc, Mutex};
+
+    struct AudioManagerFixture {
+        audio_manager: AudioManager,
+        #[allow(unused)]
+        al_get_error_ctx: oal_func::__alGetError::Context,
+        #[allow(unused)]
+        alc_open_device_ctx: oal_func::__alcOpenDevice::Context,
+        #[allow(unused)]
+        alc_create_context_ctx: oal_func::__alcCreateContext::Context,
+        #[allow(unused)]
+        alc_make_context_current_ctx: oal_func::__alcMakeContextCurrent::Context,
+        #[allow(unused)]
+        alc_destroy_context_ctx: oal_func::__alcDestroyContext::Context,
+        #[allow(unused)]
+        alc_close_device_ctx: oal_func::__alcCloseDevice::Context,
+    }
+
+    fn create_audio_manager() -> AudioManagerFixture {
+        let al_get_error_ctx = oal_func::alGetError_context();
+        al_get_error_ctx.expect().return_const_st(0);
+
+        const DEVICE_ADDR: u64 = 0x12345678;
+
+        let alc_open_device_ctx = oal_func::alcOpenDevice_context();
+        alc_open_device_ctx
+            .expect()
+            .return_const_st(DEVICE_ADDR as *mut oal::ALCdevice);
+
+        const CONTEXT_ADDR: u64 = 0xdeadbeef;
+
+        let alc_create_context_ctx = oal_func::alcCreateContext_context();
+        alc_create_context_ctx
+            .expect()
+            .return_const_st(CONTEXT_ADDR as *mut oal::ALCcontext);
+
+        let alc_make_context_current_ctx = oal_func::alcMakeContextCurrent_context();
+        alc_make_context_current_ctx
+            .expect()
+            .withf_st(|addr| (*addr as u64) == CONTEXT_ADDR || *addr == std::ptr::null_mut())
+            .returning(|_| true);
+
+        let alc_destroy_context_ctx = oal_func::alcDestroyContext_context();
+        alc_destroy_context_ctx
+            .expect()
+            .withf_st(|addr| (*addr as u64) == CONTEXT_ADDR)
+            .return_const_st(());
+
+        let alc_close_device_ctx = oal_func::alcCloseDevice_context();
+        alc_close_device_ctx
+            .expect()
+            .withf_st(|addr| (*addr as u64) == DEVICE_ADDR)
+            .return_const_st(true);
+
+        let audio_manager = AudioManager::new().unwrap();
+
+        AudioManagerFixture {
+            al_get_error_ctx,
+            alc_open_device_ctx,
+            alc_create_context_ctx,
+            alc_make_context_current_ctx,
+            alc_destroy_context_ctx,
+            alc_close_device_ctx,
+            audio_manager,
+        }
+    }
+
+    rusty_fork_test! {
+        // FIXME: Lots more tests could be added but for the time being I don't
+        // feel like it
+        #[test]
+        fn test_single_instance_allowed() {
+            let _fixture = create_audio_manager();
+            assert!(AudioManager::new().is_err())
+        }
+
+        #[test]
+        fn test_playback_channel() {
+            let al_delete_sources_ctx = oal_func::alDeleteSources_context();
+            al_delete_sources_ctx.expect().return_const_st(());
+
+            let al_delete_buffers_ctx = oal_func::alDeleteBuffers_context();
+            al_delete_buffers_ctx.expect().return_const_st(());
+
+            let mut fixture = create_audio_manager();
+
+            let al_gen_sources_ctx = oal_func::alGenSources_context();
+            al_gen_sources_ctx.expect().return_const_st(());
+
+            let al_gen_buffers_ctx = oal_func::alGenBuffers_context();
+            al_gen_buffers_ctx.expect().return_const_st(());
+
+            let al_source_queue_buffers_ctx = oal_func::alSourceQueueBuffers_context();
+            al_source_queue_buffers_ctx.expect().return_const_st(());
+
+
+            let playback_channel = fixture.audio_manager.create_playback_channel(50).unwrap();
+            let mut sent_buf = Vec::new();
+
+            for i in 0..3000 {
+                sent_buf.push(i);
+            }
+
+            playback_channel.send(AudioFrame{
+                data: AudioData::Mono16(sent_buf.clone()),
+                sample_rate: 44100
+            }).unwrap();
+
+
+            let fut = async {
+                // Run event loop for 100ms
+                futures::select! {
+                    _ = fixture.audio_manager.run().fuse() => (),
+                    _ = tokio::time::sleep(Duration::from_millis(100)).fuse() => (),
+                }
+            };
+
+            let al_get_sourcei_ctx = oal_func::alGetSourcei_context();
+
+            // Never finish processing, our audio should be short enough that we
+            // never have to reclaim
+            al_get_sourcei_ctx.expect().withf_st(|_source, param, _value| *param == oal::AL_BUFFERS_PROCESSED as i32)
+                .returning_st(|_source, _param, value| unsafe {*value = 0i32; });
+
+            al_get_sourcei_ctx.expect().withf_st(|_source, param, _value| *param == oal::AL_SOURCE_STATE as i32)
+                .returning_st(|_source, _param, value| unsafe {*value = oal::AL_PLAYING as i32; });
+
+            let buf_data: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
+            let buf_data_clone = Arc::clone(&buf_data);
+
+            let al_buffer_data_ctx = oal_func::alBufferData_context();
+            al_buffer_data_ctx.expect()
+                .withf_st(|_, format, _, _, _| {
+                    *format == oal::AL_FORMAT_MONO16 as i32
+                })
+                .returning_st(move |_, _, data, data_len, _| {
+                    unsafe {
+                        let mut locked = buf_data.lock().unwrap();
+                        locked.extend_from_slice(std::slice::from_raw_parts(data as *const i16, data_len as usize / 2));
+                    }
+                });
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(fut);
+
+            let buf_data = buf_data_clone;
+
+            assert!(*buf_data.lock().unwrap() == sent_buf);
+        }
     }
 }
