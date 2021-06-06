@@ -522,11 +522,11 @@ impl Storage {
             })
             .context("Failed to retrieve messages from DB")?;
 
-        Ok(query_map
+        query_map
             .into_iter()
             .map(|item| item.map_err(Error::from))
             .collect::<Result<Vec<_>>>()
-            .context("Failed to convert messages from DB")?)
+            .context("Failed to convert messages from DB")
     }
 
     pub fn add_unresolved_message(&mut self, message_id: &ChatMessageId) -> Result<()> {

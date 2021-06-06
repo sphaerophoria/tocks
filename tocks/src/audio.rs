@@ -1,4 +1,5 @@
 #![allow(clippy::mutex_atomic)]
+#![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;

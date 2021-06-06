@@ -25,7 +25,7 @@ fn main() {
 
     let mut al_header: PathBuf = include_path.clone();
     al_header.push("al.h");
-    let mut alc_header = include_path.clone();
+    let mut alc_header = include_path;
     alc_header.push("alc.h");
 
     let bindings = bindgen::builder()

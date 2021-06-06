@@ -450,10 +450,7 @@ impl AccountManager {
         tokio::select! {
             _  = bundle.account.run() => { None }
             event = bundle.account_events.recv() => {
-                match event {
-                    Some(event) => Some((id, event)),
-                    None => None
-                }
+                event.map(|event| (id, event))
             }
         }
     }
