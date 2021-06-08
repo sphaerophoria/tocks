@@ -18,6 +18,8 @@ mod oal_func_impl {
     use openal_sys as oal;
 
     extern "C" {
+        #![cfg_attr(test, allow(unused))]
+
         pub fn alGenSources(n: i32, sources: *mut u32);
         pub fn alDeleteSources(n: i32, sources: *const u32);
         pub fn alBufferData(buffer: u32, format: i32, data: *const c_void, size: i32, from: i32);
@@ -27,6 +29,7 @@ mod oal_func_impl {
         pub fn alSourceQueueBuffers(source: u32, nb: i32, buffers: *const u32);
         pub fn alSourceUnqueueBuffers(source: u32, nb: i32, buffers: *mut u32);
 
+        pub fn alSourcei(source: u32, param: i32, value: i32);
         pub fn alSourcePlay(source: u32);
         pub fn alGetSourcei(source: u32, param: i32, value: *mut i32);
 
@@ -118,7 +121,7 @@ struct OalSource {
 }
 
 impl OalSource {
-    fn new(num_buffers: usize) -> Result<OalSource> {
+    fn new(num_buffers: usize, looping: bool) -> Result<OalSource> {
         unsafe {
             let mut source = 0u32;
 
@@ -133,6 +136,8 @@ impl OalSource {
             buffers.set_len(num_buffers);
 
             debug!("Got buffers for source {}: {:?}", source, buffers);
+
+            oal_func::alSourcei(source, oal::AL_LOOPING as i32, looping as i32);
 
             Ok(OalSource {
                 source,
@@ -195,6 +200,16 @@ impl OalSource {
             oal_result().context("Failed to get source state")?;
 
             Ok(source_state == oal::AL_PLAYING as i32)
+        }
+    }
+
+    fn repeating(&self) -> Result<bool> {
+        unsafe {
+            let mut repeating = 0;
+            oal_func::alGetSourcei(self.source, oal::AL_LOOPING as i32, &mut repeating);
+            oal_result().context("Failed to get looping state")?;
+
+            Ok(repeating != 0)
         }
     }
 
@@ -317,6 +332,12 @@ pub struct AudioManager {
     finishing_streams: Vec<OalSource>,
 }
 
+pub struct RepeatingAudioHandle {
+    // Just hold a sender that we don't push anything into. This allows us to
+    // re-use all the logic around handling cleanup of audio channels
+    _handle: UnboundedSender<AudioFrame>,
+}
+
 impl AudioManager {
     pub fn new() -> Result<AudioManager> {
         unsafe {
@@ -397,42 +418,25 @@ impl AudioManager {
         Ok(())
     }
 
+    #[allow(unused)]
     pub fn create_playback_channel(
         &mut self,
         frame_depth: usize,
     ) -> Result<UnboundedSender<AudioFrame>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        let oal_source = OalSource::new(frame_depth).context("Failed to allocate OpenAL source")?;
-
-        self.streams.push((rx, oal_source));
-
-        Ok(tx)
+        self.create_playback_channel_priv(frame_depth, false)
     }
 
     pub fn play_formatted_audio(&mut self, container: FormattedAudio) {
-        match container {
-            FormattedAudio::Mp3(data) => {
-                let notification_handle = self.create_playback_channel(50).unwrap();
+        let _ = self.play_formatted_audio_priv(container, false);
+    }
 
-                let mut mp3_decoder = minimp3::Decoder::new(&data[..]);
+    pub fn play_repeating_formatted_audio(
+        &mut self,
+        container: FormattedAudio,
+    ) -> RepeatingAudioHandle {
+        let handle = self.play_formatted_audio_priv(container, true);
 
-                while let Ok(frame) = mp3_decoder.next_frame() {
-                    let data = match frame.channels {
-                        1 => AudioData::Mono16(frame.data),
-                        2 => AudioData::Stereo16(frame.data),
-                        _ => continue,
-                    };
-
-                    notification_handle
-                        .send(AudioFrame {
-                            data,
-                            sample_rate: frame.sample_rate,
-                        })
-                        .expect("Failed to send notification data to audio thread");
-                }
-            }
-        }
+        RepeatingAudioHandle { _handle: handle }
     }
 
     pub async fn run(&mut self) {
@@ -474,7 +478,36 @@ impl AudioManager {
             futures::future::pending::<()>().await;
         }
 
-        tokio::time::sleep(Duration::from_millis(300)).await
+        tokio::time::sleep(Duration::from_millis(100)).await
+    }
+
+    fn create_playback_channel_priv(
+        &mut self,
+        frame_depth: usize,
+        looping: bool,
+    ) -> Result<UnboundedSender<AudioFrame>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        let oal_source =
+            OalSource::new(frame_depth, looping).context("Failed to allocate OpenAL source")?;
+
+        self.streams.push((rx, oal_source));
+
+        Ok(tx)
+    }
+
+    fn play_formatted_audio_priv(
+        &mut self,
+        container: FormattedAudio,
+        looping: bool,
+    ) -> UnboundedSender<AudioFrame> {
+        let notification_handle = self.create_playback_channel_priv(50, looping).unwrap();
+
+        match container {
+            FormattedAudio::Mp3(data) => Self::decode_mp3_into_channel(data, &notification_handle),
+        }
+
+        notification_handle
     }
 
     fn handle_incoming_audio_frame(&mut self, frame: Option<AudioFrame>, index: usize) {
@@ -501,12 +534,31 @@ impl AudioManager {
             std::mem::swap(&mut finishing_streams, &mut self.finishing_streams);
             let (finishing_streams, _) = finishing_streams
                 .into_iter()
-                .partition(|item| item.playing().unwrap());
+                .partition(|item| item.playing().unwrap() && !item.repeating().unwrap());
 
             self.finishing_streams = finishing_streams;
         }
 
         // FIXME: close device if all streams are finished
+    }
+
+    fn decode_mp3_into_channel(data: Vec<u8>, channel: &UnboundedSender<AudioFrame>) {
+        let mut mp3_decoder = minimp3::Decoder::new(&data[..]);
+
+        while let Ok(frame) = mp3_decoder.next_frame() {
+            let data = match frame.channels {
+                1 => AudioData::Mono16(frame.data),
+                2 => AudioData::Stereo16(frame.data),
+                _ => continue,
+            };
+
+            channel
+                .send(AudioFrame {
+                    data,
+                    sample_rate: frame.sample_rate,
+                })
+                .expect("Failed to send notification data to audio thread");
+        }
     }
 }
 
@@ -635,6 +687,10 @@ mod test {
             let al_source_queue_buffers_ctx = oal_func::alSourceQueueBuffers_context();
             al_source_queue_buffers_ctx.expect().return_const_st(());
 
+            let al_sourcei_ctx = oal_func::alSourcei_context();
+            al_sourcei_ctx.expect()
+                .withf_st(|_source, key, _value| *key == oal::AL_LOOPING as i32)
+                .return_const_st(());
 
             let playback_channel = fixture.audio_manager.create_playback_channel(50).unwrap();
             let mut sent_buf = Vec::new();
@@ -666,6 +722,9 @@ mod test {
 
             al_get_sourcei_ctx.expect().withf_st(|_source, param, _value| *param == oal::AL_SOURCE_STATE as i32)
                 .returning_st(|_source, _param, value| unsafe {*value = oal::AL_PLAYING as i32; });
+
+            al_get_sourcei_ctx.expect().withf_st(|_source, param, _value| *param == oal::AL_LOOPING as i32)
+                .returning_st(|_source, _param, value| unsafe {*value = 0; });
 
             let buf_data: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
             let buf_data_clone = Arc::clone(&buf_data);

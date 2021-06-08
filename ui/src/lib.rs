@@ -170,6 +170,8 @@ struct QTocks {
     error: qt_signal!(error: QString),
     audioOutputs: qt_property!(QVariantList; READ get_audio_outputs NOTIFY audioOutputsChanged),
     audioOutputsChanged: qt_signal!(),
+    startAudioTest: qt_method!(fn(&self)),
+    stopAudioTest: qt_method!(fn(&self)),
     setAudioOutput: qt_method!(fn(&self, output_idx: i64)),
     visible: qt_property!(bool; WRITE set_visible),
 
@@ -203,6 +205,8 @@ impl QTocks {
             error: Default::default(),
             audioOutputs: Default::default(),
             audioOutputsChanged: Default::default(),
+            startAudioTest: Default::default(),
+            stopAudioTest: Default::default(),
             setAudioOutput: Default::default(),
             visible: Default::default(),
             ui_requests_tx,
@@ -330,6 +334,25 @@ impl QTocks {
             .expect("Invalid audio device id passed from qml");
 
         self.send_ui_request(TocksUiEvent::AudioDeviceSelected(device));
+    }
+
+    #[allow(non_snake_case)]
+    fn startAudioTest(&self) {
+        let mut notification_data = Vec::new();
+        // FIXME: better error handling
+        File::open(resource_path("qml/res/incoming_message.mp3"))
+            .unwrap()
+            .read_to_end(&mut notification_data)
+            .unwrap();
+
+        self.send_ui_request(TocksUiEvent::PlaySoundRepeating(FormattedAudio::Mp3(
+            notification_data,
+        )))
+    }
+
+    #[allow(non_snake_case)]
+    fn stopAudioTest(&self) {
+        self.send_ui_request(TocksUiEvent::StopRepeatingSound)
     }
 
     fn add_audio_output(&self, device: AudioDevice) {

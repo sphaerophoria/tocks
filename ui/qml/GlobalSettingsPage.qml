@@ -30,5 +30,25 @@ Item {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
         }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.columnSpan: 2
+            TocksButton {
+                Layout.fillWidth: true
+                text: "Start audio test"
+                onClicked: {
+                    tocks.startAudioTest()
+                }
+            }
+
+            TocksButton {
+                Layout.fillWidth: true
+                text: "Stop audio test"
+                onClicked: {
+                    tocks.stopAudioTest()
+                }
+            }
+        }
     }
 }

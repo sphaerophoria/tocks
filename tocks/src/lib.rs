@@ -17,6 +17,7 @@ pub use crate::{
 };
 
 use anyhow::{Context, Result};
+use audio::RepeatingAudioHandle;
 
 use crate::{
     account::{Account, AccountManager},
@@ -44,6 +45,9 @@ pub enum TocksUiEvent {
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
     PlaySound(FormattedAudio),
+    // Temporary events to test audio playback
+    PlaySoundRepeating(FormattedAudio),
+    StopRepeatingSound,
     AudioDeviceSelected(AudioDevice),
 }
 
@@ -81,6 +85,7 @@ pub struct Tocks {
     audio_manager: AudioManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
     tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
+    repeating_sound: Option<RepeatingAudioHandle>,
 }
 
 impl Tocks {
@@ -95,6 +100,7 @@ impl Tocks {
             audio_manager: AudioManager::new().expect("Failed to start audio manager"),
             ui_event_rx,
             tocks_event_tx,
+            repeating_sound: None,
         };
 
         // Intentionally discard errors here. We'll get more errors later that
@@ -285,6 +291,13 @@ impl Tocks {
                 }
             }
             TocksUiEvent::PlaySound(audio) => self.audio_manager.play_formatted_audio(audio),
+            TocksUiEvent::PlaySoundRepeating(audio) => {
+                self.repeating_sound =
+                    Some(self.audio_manager.play_repeating_formatted_audio(audio));
+            }
+            TocksUiEvent::StopRepeatingSound => {
+                self.repeating_sound = None;
+            }
             TocksUiEvent::AudioDeviceSelected(device) => {
                 self.audio_manager
                     .set_output_device(device)
