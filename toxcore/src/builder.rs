@@ -1,9 +1,5 @@
 use crate::{error::*, tox::ToxEventCallback, Event};
-use crate::{
-    sys::{ToxApi, ToxApiImpl, ToxOptionsApi, ToxOptionsSys},
-    tox::{Tox, ToxImpl},
-    ProxyType, SaveData,
-};
+use crate::{sys, tox::Tox, ProxyType, SaveData};
 
 use paste::paste;
 
@@ -19,10 +15,11 @@ macro_rules! impl_builder_option {
         impl_builder_option!($field_name, $field_name, $tag, $type);
     };
     ($field_name: ident, $exposed_name: ident, $tag: ident, $type:ty) => {
-        pub fn $exposed_name(&mut self, $tag: $type) {
+        pub fn $exposed_name(self, $tag: $type) -> Self {
             unsafe {
                 paste! {
-                    self.api.[<set_ $field_name>](self.options, $tag);
+                    sys::[<tox_options_set_ $field_name>](self.options, $tag);
+                    self
                 }
             }
         }
@@ -37,116 +34,23 @@ macro_rules! impl_bool_builder_option {
     };
 }
 
-/// Helper for constructing a [`Tox`] instance
 pub struct ToxBuilder {
-    inner: ToxBuilderImpl<ToxOptionsSys>,
-}
-
-impl ToxBuilder {
-    pub fn new() -> Result<ToxBuilder, ToxBuilderCreationError> {
-        Ok(ToxBuilder {
-            inner: ToxBuilderImpl::new(ToxOptionsSys)?,
-        })
-    }
-
-    pub fn ipv6(mut self, enable: bool) -> Self {
-        self.inner.ipv6(enable);
-        self
-    }
-
-    pub fn udp(mut self, enable: bool) -> Self {
-        self.inner.udp(enable);
-        self
-    }
-
-    pub fn local_discovery(mut self, enable: bool) -> Self {
-        self.inner.local_discovery(enable);
-        self
-    }
-
-    pub fn proxy_port(mut self, port: u16) -> Self {
-        self.inner.proxy_port(port);
-        self
-    }
-
-    pub fn start_port(mut self, port: u16) -> Self {
-        self.inner.start_port(port);
-        self
-    }
-
-    pub fn end_port(mut self, port: u16) -> Self {
-        self.inner.end_port(port);
-        self
-    }
-
-    pub fn tcp_port(mut self, port: u16) -> Self {
-        self.inner.tcp_port(port);
-        self
-    }
-
-    pub fn hole_punching(mut self, enable: bool) -> Self {
-        self.inner.hole_punching(enable);
-        self
-    }
-
-    pub fn experimental_thread_safety(mut self, enable: bool) -> Self {
-        self.inner.experimental_thread_safety(enable);
-        self
-    }
-
-    pub fn proxy_type(mut self, t: ProxyType) -> Self {
-        self.inner.proxy_type(t);
-        self
-    }
-
-    pub fn proxy_host(mut self, host: &str) -> Result<Self, NulError> {
-        self.inner.proxy_host(host)?;
-        Ok(self)
-    }
-
-    pub fn savedata(mut self, data: SaveData) -> Self {
-        self.inner.savedata(data);
-        self
-    }
-
-    pub fn log(mut self, enable: bool) -> Self {
-        self.inner.log(enable);
-        self
-    }
-
-    pub fn event_callback<F: FnMut(Event) + 'static>(mut self, callback: F) -> Self {
-        self.inner.event_callback(Box::new(callback));
-        self
-    }
-
-    pub fn build(self) -> Result<Tox, ToxBuildError> {
-        Ok(Tox::new(self.inner.build(ToxApiImpl)?))
-    }
-}
-
-/// Generic implementation of [`ToxBuilder`]. Abstracted this way to allow for
-/// testing/mocking without exposing generics to API consumers. Note that this
-/// isn't quite as useful as it is for [`Tox`] but it does allow us to
-/// test some of the conversion logic
-struct ToxBuilderImpl<Api: ToxOptionsApi> {
-    api: Api,
     options: *mut Tox_Options,
     event_callback: Option<ToxEventCallback>,
     savedata: SaveData,
     log: bool,
 }
 
-impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
-    pub(crate) fn new(api: Api) -> Result<ToxBuilderImpl<Api>, ToxBuilderCreationError> {
+impl ToxBuilder {
+    pub(crate) fn new() -> Result<ToxBuilder, ToxBuilderCreationError> {
         let mut err = TOX_ERR_OPTIONS_NEW_OK;
 
-        let options = unsafe { api.new(&mut err as *mut TOX_ERR_OPTIONS_NEW) };
+        let options = unsafe { sys::tox_options_new(&mut err as *mut TOX_ERR_OPTIONS_NEW) };
         if err != TOX_ERR_OPTIONS_NEW_OK {
             return Err(ToxBuilderCreationError);
         }
 
-        Ok(ToxBuilderImpl {
-            api,
+        Ok(ToxBuilder {
             options,
             event_callback: None,
             savedata: SaveData::None,
@@ -164,7 +68,7 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
     impl_bool_builder_option!(hole_punching);
     impl_builder_option!(experimental_thread_safety, enabled, bool);
 
-    pub fn proxy_type(&mut self, t: ProxyType) {
+    pub fn proxy_type(self, t: ProxyType) -> Self {
         let c_type = match t {
             ProxyType::None => TOX_PROXY_TYPE_NONE,
             ProxyType::Http => TOX_PROXY_TYPE_HTTP,
@@ -172,28 +76,32 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         };
 
         unsafe {
-            self.api.set_proxy_type(self.options, c_type);
+            sys::tox_options_set_proxy_type(self.options, c_type);
         }
+        self
     }
 
-    pub fn proxy_host(&mut self, host: &str) -> Result<(), NulError> {
+    pub fn proxy_host(self, host: &str) -> Result<Self, NulError> {
         let cstr = CString::new(host)?;
         unsafe {
-            self.api.set_proxy_host(self.options, cstr.as_ptr());
+            sys::tox_options_set_proxy_host(self.options, cstr.as_ptr());
         }
-        Ok(())
+        Ok(self)
     }
 
-    pub fn savedata(&mut self, data: SaveData) {
+    pub fn savedata(mut self, data: SaveData) -> Self {
         self.savedata = data;
+        self
     }
 
-    pub fn log(&mut self, enable: bool) {
+    pub fn log(mut self, enable: bool) -> Self {
         self.log = enable;
+        self
     }
 
-    pub fn event_callback(&mut self, callback: ToxEventCallback) {
-        self.event_callback = Some(callback);
+    pub fn event_callback<F: FnMut(Event) + 'static>(mut self, callback: F) -> Self {
+        self.event_callback = Some(Box::new(callback));
+        self
     }
 
     fn map_err_new(err: TOX_ERR_NEW) -> ToxCreationError {
@@ -212,14 +120,10 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
     }
 
     /// Create the [`Tox`] instance
-    pub fn build<ToxApiImpl: ToxApi>(
-        mut self,
-        tox_api: ToxApiImpl,
-    ) -> Result<ToxImpl<ToxApiImpl>, ToxBuildError> {
+    pub fn build(mut self) -> Result<Tox, ToxBuildError> {
         if self.log {
             unsafe {
-                self.api
-                    .set_log_callback(self.options, Some(tox_log_callback));
+                sys::tox_options_set_log_callback(self.options, Some(tox_log_callback));
             }
         }
 
@@ -227,22 +131,18 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
 
         match &*data {
             SaveData::ToxSave(data) => unsafe {
-                self.api
-                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_TOX_SAVE);
-                self.api
-                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
+                sys::tox_options_set_savedata_type(self.options, TOX_SAVEDATA_TYPE_TOX_SAVE);
+                sys::tox_options_set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
             },
             SaveData::SecretKey(data) => unsafe {
-                self.api
-                    .set_savedata_type(self.options, TOX_SAVEDATA_TYPE_SECRET_KEY);
-                self.api
-                    .set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
+                sys::tox_options_set_savedata_type(self.options, TOX_SAVEDATA_TYPE_SECRET_KEY);
+                sys::tox_options_set_savedata_data(self.options, data.as_ptr(), data.len() as u64);
             },
             SaveData::None => {}
         }
 
         let mut err = TOX_ERR_NEW_OK;
-        let sys_tox = unsafe { tox_api.new(self.options, &mut err) };
+        let sys_tox = unsafe { sys::tox_new(self.options, &mut err) };
 
         if err != TOX_ERR_NEW_OK {
             return Err(From::from(Self::map_err_new(err)));
@@ -251,16 +151,16 @@ impl<Api: ToxOptionsApi> ToxBuilderImpl<Api> {
         let mut event_callback = None;
         std::mem::swap(&mut event_callback, &mut self.event_callback);
 
-        let ret = ToxImpl::new(tox_api, sys_tox, event_callback);
+        let ret = Tox::new(sys_tox, event_callback);
 
         Ok(ret)
     }
 }
 
-impl<Api: ToxOptionsApi> Drop for ToxBuilderImpl<Api> {
+impl Drop for ToxBuilder {
     fn drop(&mut self) {
         unsafe {
-            self.api.free(self.options);
+            sys::tox_options_free(self.options);
         }
     }
 }
@@ -320,38 +220,79 @@ pub(crate) unsafe extern "C" fn tox_log_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::{MockToxApi, MockToxOptionsApi};
     use std::ffi::CStr;
 
-    fn generate_tox_api_mock() -> MockToxApi {
-        let mut mock = MockToxApi::default();
+    struct ToxApiFixture {
+        _callback_friend_request_ctx: sys::__tox_callback_friend_request::Context,
+        _callback_friend_message_ctx: sys::__tox_callback_friend_message::Context,
+        _callback_friend_read_receipt_ctx: sys::__tox_callback_friend_read_receipt::Context,
+        _callback_friend_status_ctx: sys::__tox_callback_friend_status::Context,
+        _callback_friend_connection_status_ctx:
+            sys::__tox_callback_friend_connection_status::Context,
+        _callback_friend_name_ctx: sys::__tox_callback_friend_name::Context,
+        _kill_ctx: sys::__tox_kill::Context,
+        _new_ctx: sys::__tox_new::Context,
+    }
 
-        mock.expect_callback_friend_request().return_const(());
-        mock.expect_callback_friend_message().return_const(());
-        mock.expect_callback_friend_read_receipt().return_const(());
-        mock.expect_callback_friend_status().return_const(());
-        mock.expect_callback_friend_connection_status()
+    fn generate_tox_api_mock() -> ToxApiFixture {
+        let callback_friend_request_ctx = sys::tox_callback_friend_request_context();
+        callback_friend_request_ctx.expect().return_const(());
+
+        let callback_friend_message_ctx = sys::tox_callback_friend_message_context();
+        callback_friend_message_ctx.expect().return_const(());
+
+        let callback_friend_read_receipt_ctx = sys::tox_callback_friend_read_receipt_context();
+        callback_friend_read_receipt_ctx.expect().return_const(());
+
+        let callback_friend_status_ctx = sys::tox_callback_friend_status_context();
+        callback_friend_status_ctx.expect().return_const(());
+
+        let callback_friend_connection_status_ctx =
+            sys::tox_callback_friend_connection_status_context();
+        callback_friend_connection_status_ctx
+            .expect()
             .return_const(());
-        mock.expect_callback_friend_name().return_const(());
 
-        mock.expect_kill().return_const(());
-        mock.expect_new().returning_st(|_, _| std::ptr::null_mut());
+        let callback_friend_name_ctx = sys::tox_callback_friend_name_context();
+        callback_friend_name_ctx.expect().return_const(());
 
-        mock
+        let kill_ctx = sys::tox_kill_context();
+        kill_ctx.expect().return_const(());
+
+        let new_ctx = sys::tox_new_context();
+        new_ctx.expect().returning_st(|_, _| std::ptr::null_mut());
+
+        ToxApiFixture {
+            _callback_friend_request_ctx: callback_friend_request_ctx,
+            _callback_friend_message_ctx: callback_friend_message_ctx,
+            _callback_friend_read_receipt_ctx: callback_friend_read_receipt_ctx,
+            _callback_friend_status_ctx: callback_friend_status_ctx,
+            _callback_friend_connection_status_ctx: callback_friend_connection_status_ctx,
+            _callback_friend_name_ctx: callback_friend_name_ctx,
+            _kill_ctx: kill_ctx,
+            _new_ctx: new_ctx,
+        }
     }
     struct BuilderFixture {
-        builder: ToxBuilderImpl<MockToxOptionsApi>,
+        builder: ToxBuilder,
+        _options_new_ctx: sys::__tox_options_new::Context,
+        _options_free_ctx: sys::__tox_options_free::Context,
     }
 
     impl BuilderFixture {
-        fn new(mut mock: MockToxOptionsApi) -> Result<BuilderFixture, Box<dyn std::error::Error>> {
-            mock.expect_new()
+        fn new() -> Result<BuilderFixture, Box<dyn std::error::Error>> {
+            let options_new_ctx = sys::tox_options_new_context();
+            options_new_ctx
+                .expect()
                 .returning_st(|_| 0xdeadbeef as *mut Tox_Options);
 
-            mock.expect_free().return_const(());
+            let options_free_ctx = sys::tox_options_free_context();
+            options_free_ctx.expect().return_const(());
 
             Ok(BuilderFixture {
-                builder: ToxBuilderImpl::new(mock)?,
+                builder: ToxBuilder::new()?,
+                _options_new_ctx: options_new_ctx,
+                _options_free_ctx: options_free_ctx,
             })
         }
     }
@@ -359,22 +300,23 @@ mod tests {
     macro_rules! test_builder_options {
         ($test_name:ident, $rust_name:ident, $rust_val:expr, $mock_name:ident, $c_val:expr) => {
             paste! {
+                rusty_fork::rusty_fork_test! {
                 #[test]
                 fn [<test_options_ $test_name>]() -> Result<(), Box<dyn std::error::Error>>
                 {
-                    let mut mock = MockToxOptionsApi::default();
-
-                    mock.[<expect_set_ $mock_name>]()
+                    let ctx = sys::[<tox_options_set_ $mock_name _context>]();
+                    ctx.expect()
                         .withf_st(|_, v| *v == $c_val)
                         .return_const(())
                         .once();
 
-                    let mut fixture = BuilderFixture::new(mock)?;
+                    let fixture = BuilderFixture::new()?;
 
                     fixture.builder
                         .$rust_name($rust_val);
 
                     Ok(())
+                }
                 }
             }
         };
@@ -392,15 +334,17 @@ mod tests {
         };
     }
 
-    #[test]
-    fn test_builder_creation_failure() {
-        let mut mock = MockToxOptionsApi::default();
-        mock.expect_new().returning_st(|err| {
-            unsafe { *err = TOX_ERR_OPTIONS_NEW_MALLOC };
-            std::ptr::null_mut()
-        });
+    rusty_fork::rusty_fork_test! {
+        #[test]
+        fn test_builder_creation_failure() {
+            let options_new_ctx = sys::tox_options_new_context();
+            options_new_ctx.expect().returning_st(|err| {
+                unsafe { *err = TOX_ERR_OPTIONS_NEW_MALLOC };
+                std::ptr::null_mut()
+            });
 
-        assert!(ToxBuilderImpl::new(mock).is_err());
+            assert!(ToxBuilder::new().is_err());
+        }
     }
 
     test_bool_option!(ipv6);
@@ -440,121 +384,122 @@ mod tests {
         true
     );
 
-    #[test]
-    fn test_proxy_host_success() -> Result<(), Box<dyn std::error::Error>> {
-        let mut mock = MockToxOptionsApi::default();
+    rusty_fork::rusty_fork_test! {
 
-        mock.expect_set_proxy_host()
-            .withf_st(|_, v| unsafe { CStr::from_ptr(*v).to_string_lossy() == "test" })
-            .return_const(())
-            .once();
+        #[test]
+        fn test_proxy_host_success() -> Result<(), Box<dyn std::error::Error>> {
+            let set_proxy_host_ctx = sys::tox_options_set_proxy_host_context();
+    set_proxy_host_ctx.expect()
+                .withf_st(|_, v| unsafe { CStr::from_ptr(*v).to_string_lossy() == "test" })
+                .return_const(())
+                .once();
 
-        BuilderFixture::new(mock)?.builder.proxy_host("test")?;
+            BuilderFixture::new()?.builder.proxy_host("test")?;
 
-        Ok(())
-    }
+            Ok(())
+        }
 
-    #[test]
-    fn test_proxy_host_failure() -> Result<(), Box<dyn std::error::Error>> {
-        let mock = MockToxOptionsApi::default();
-        assert!(BuilderFixture::new(mock)?
-            .builder
-            .proxy_host("\0 \0 \0")
-            .is_err());
+        #[test]
+        fn test_proxy_host_failure() -> Result<(), Box<dyn std::error::Error>> {
+            assert!(BuilderFixture::new()?
+                .builder
+                .proxy_host("\0 \0 \0")
+                .is_err());
 
-        Ok(())
-    }
+            Ok(())
+        }
 
-    #[test]
-    fn test_savedata_tox_save() -> Result<(), Box<dyn std::error::Error>> {
-        let mut mock = MockToxOptionsApi::default();
-        let savedata = "test".to_string().into_bytes();
+        #[test]
+        fn test_savedata_tox_save() -> Result<(), Box<dyn std::error::Error>> {
+            let savedata = "test".to_string().into_bytes();
 
-        mock.expect_set_savedata_type()
-            .withf_st(|_, v| *v == TOX_SAVEDATA_TYPE_TOX_SAVE)
-            .return_const(())
-            .once();
+            let set_savedata_type_ctx = sys::tox_options_set_savedata_type_context();
+    set_savedata_type_ctx.expect()
+                .withf_st(|_, v| *v == TOX_SAVEDATA_TYPE_TOX_SAVE)
+                .return_const(())
+                .once();
 
-        let savedata_clone = savedata.clone();
+            let savedata_clone = savedata.clone();
 
-        mock.expect_set_savedata_data()
-            .withf_st(move |_, data, len| unsafe {
-                std::slice::from_raw_parts(*data, *len as usize) == &savedata_clone
-            })
-            .return_const(())
-            .once();
+            let set_savedata_data_ctx = sys::tox_options_set_savedata_data_context();
+    set_savedata_data_ctx.expect()
+                .withf_st(move |_, data, len| unsafe {
+                    std::slice::from_raw_parts(*data, *len as usize) == &savedata_clone
+                })
+                .return_const(())
+                .once();
 
-        let mut fixture = BuilderFixture::new(mock)?;
+            let fixture = BuilderFixture::new()?;
 
-        fixture.builder.savedata(SaveData::ToxSave(savedata));
+            let _tox_mock = generate_tox_api_mock();
 
-        fixture.builder.build(generate_tox_api_mock()).unwrap();
+            fixture.builder.savedata(SaveData::ToxSave(savedata)).build().unwrap();
 
-        Ok(())
-    }
+            Ok(())
+        }
 
-    #[test]
-    fn test_savedata_secret_key() -> Result<(), Box<dyn std::error::Error>> {
-        let mut mock = MockToxOptionsApi::default();
+        #[test]
+        fn test_savedata_secret_key() -> Result<(), Box<dyn std::error::Error>> {
+            let set_savedata_type_ctx = sys::tox_options_set_savedata_type_context();
+    set_savedata_type_ctx.expect()
+                .withf_st(|_, v| *v == TOX_SAVEDATA_TYPE_SECRET_KEY)
+                .return_const(())
+                .once();
 
-        mock.expect_set_savedata_type()
-            .withf_st(|_, v| *v == TOX_SAVEDATA_TYPE_SECRET_KEY)
-            .return_const(())
-            .once();
+            let savedata = "key".chars().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let savedata = "key".chars().map(|c| c as u8).collect::<Vec<u8>>();
+            let savedata_clone = savedata.clone();
 
-        let savedata_clone = savedata.clone();
+            let set_savedata_data_ctx = sys::tox_options_set_savedata_data_context();
+    set_savedata_data_ctx.expect()
+                .withf_st(move |_, data, len| unsafe {
+                    std::slice::from_raw_parts(*data, *len as usize) == &savedata_clone
+                })
+                .return_const(())
+                .once();
 
-        mock.expect_set_savedata_data()
-            .withf_st(move |_, data, len| unsafe {
-                std::slice::from_raw_parts(*data, *len as usize) == &savedata_clone
-            })
-            .return_const(())
-            .once();
+            let _tox_mock = generate_tox_api_mock();
+            let fixture = BuilderFixture::new()?;
 
-        let mut fixture = BuilderFixture::new(mock)?;
+            fixture.builder.savedata(SaveData::SecretKey(savedata)).build().unwrap();
 
-        fixture.builder.savedata(SaveData::SecretKey(savedata));
+            Ok(())
+        }
 
-        fixture.builder.build(generate_tox_api_mock()).unwrap();
+        #[test]
+        fn test_logger_enabled() -> Result<(), Box<dyn std::error::Error>> {
+            let set_log_callback_ctx = sys::tox_options_set_log_callback_context();
+            set_log_callback_ctx.expect()
+                .withf_st(|_, cb| *cb == Some(tox_log_callback))
+                .return_const(())
+                .once();
 
-        Ok(())
-    }
+            {
+                let _tox_mock = generate_tox_api_mock();
+                let fixture = BuilderFixture::new()?;
+                fixture.builder.log(true).build()?;
+            }
 
-    #[test]
-    fn test_logger_enabled() -> Result<(), Box<dyn std::error::Error>> {
-        let mut mock = MockToxOptionsApi::default();
+            {
+                let _tox_mock = generate_tox_api_mock();
+                // The second iteration should fail due to the newly injected mock
+                let fixture = BuilderFixture::new()?;
+                fixture.builder.log(false).build()?;
+            }
 
-        mock.expect_set_log_callback()
-            .withf_st(|_, cb| *cb == Some(tox_log_callback))
-            .return_const(())
-            .once();
+            Ok(())
+        }
 
-        let tox_mock = generate_tox_api_mock();
-        let mut fixture = BuilderFixture::new(mock)?;
-        fixture.builder.log(true);
-        fixture.builder.build(tox_mock)?;
+        #[test]
+        fn test_convert_log_level() -> Result<(), ()> {
+            use log::Level;
+            assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_ERROR)?, Level::Error);
+            assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_WARNING)?, Level::Warn);
+            assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_INFO)?, Level::Info);
+            assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_DEBUG)?, Level::Debug);
+            assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_TRACE)?, Level::Trace);
 
-        let tox_mock = generate_tox_api_mock();
-        let mock = MockToxOptionsApi::default();
-        // The second iteration should fail due to the newly injected mock
-        let mut fixture = BuilderFixture::new(mock)?;
-        fixture.builder.log(false);
-        fixture.builder.build(tox_mock)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_convert_log_level() -> Result<(), ()> {
-        use log::Level;
-        assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_ERROR)?, Level::Error);
-        assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_WARNING)?, Level::Warn);
-        assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_INFO)?, Level::Info);
-        assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_DEBUG)?, Level::Debug);
-        assert_eq!(convert_tox_log_level(TOX_LOG_LEVEL_TRACE)?, Level::Trace);
-
-        Ok(())
-    }
+            Ok(())
+        }
+        }
 }

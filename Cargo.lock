@@ -958,6 +958,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-fork"
+version = "0.3.0"
+source = "git+https://github.com/daxpedda/rusty-fork?branch=proc-macro-feature#a5b7d7b4578881788f8d5a86f8ffa268309b42e1"
+dependencies = [
+ "fnv",
+ "quick-error",
+ "rusty-fork-macro",
+ "tempfile",
+ "wait-timeout",
+]
+
+[[package]]
+name = "rusty-fork-macro"
+version = "0.1.0"
+source = "git+https://github.com/daxpedda/rusty-fork?branch=proc-macro-feature#a5b7d7b4578881788f8d5a86f8ffa268309b42e1"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "shlex"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1106,7 +1127,7 @@ dependencies = [
  "openal-sys",
  "platform-dirs",
  "rusqlite",
- "rusty-fork",
+ "rusty-fork 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1145,8 +1166,10 @@ dependencies = [
  "lazy_static",
  "log",
  "mockall",
+ "mockall_double",
  "paste",
  "pretty_env_logger",
+ "rusty-fork 0.3.0 (git+https://github.com/daxpedda/rusty-fork?branch=proc-macro-feature)",
  "structopt",
  "thiserror",
  "tokio",
