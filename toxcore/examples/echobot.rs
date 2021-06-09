@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use toxcore::{Event, Friend, Message, PublicKey, SaveData};
+use toxcore::{Event, SaveData};
 
 use tokio::sync::mpsc;
 
