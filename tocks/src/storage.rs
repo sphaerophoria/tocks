@@ -4,7 +4,7 @@ use toxcore::{Message, PublicKey};
 
 use anyhow::{anyhow, Context, Error, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction, NO_PARAMS};
+use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction};
 
 use std::{fmt, path::Path};
 
@@ -155,7 +155,7 @@ impl Storage {
             .context("Failed to prepare statement to retrieve friends from DB")?;
 
         let query_results = statement
-            .query_map(NO_PARAMS, |row| {
+            .query_map([], |row| {
                 let chat_handle = ChatHandle {
                     chat_id: row.get(0)?,
                 };
@@ -165,7 +165,7 @@ impl Storage {
                 let public_key_bytes: Vec<u8> = row.get(2)?;
                 let name: String = row.get(3)?;
 
-                let pending: bool = row.get_raw(4) != ValueRef::Null;
+                let pending: bool = row.get_ref_unwrap(4) != ValueRef::Null;
 
                 Ok((chat_handle, user_handle, public_key_bytes, name, pending))
             })
@@ -247,7 +247,7 @@ impl Storage {
             Some(id) => id,
             None => {
                 transaction
-                    .execute("INSERT INTO chats DEFAULT VALUES", NO_PARAMS)
+                    .execute("INSERT INTO chats DEFAULT VALUES", [])
                     .context("Failed to add chat to DB")?;
 
                 let chat_id = transaction.last_insert_rowid();
@@ -387,7 +387,7 @@ impl Storage {
             .context("Failed to prepare blocked users query")?;
 
         let mapped_rows = statement
-            .query_map(NO_PARAMS, |row| {
+            .query_map([], |row| {
                 let user_handle = UserHandle {
                     user_id: row.get(0)?,
                 };
@@ -504,7 +504,7 @@ impl Storage {
                 let timestamp: DateTime<Utc> = row.get(2)?;
                 let message_str: String = row.get(3)?;
                 let is_action: bool = row.get(4)?;
-                let complete: bool = row.get_raw(5) == ValueRef::Null;
+                let complete: bool = row.get_ref_unwrap(5) == ValueRef::Null;
 
                 let message = if is_action {
                     Message::Action(message_str)
@@ -597,7 +597,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
     let transaction = connection.transaction()?;
 
     transaction
-        .execute("PRAGMA foreign_keys = ON", NO_PARAMS)
+        .execute("PRAGMA foreign_keys = ON", [])
         .context("Failed to enable foreign key support")?;
 
     // Create a chat id table that acts solely to link messages to
@@ -606,7 +606,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
         .execute(
             "CREATE TABLE IF NOT EXISTS chats (\
             id INTEGER PRIMARY KEY)",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create chats table")?;
 
@@ -616,7 +616,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             id INTEGER PRIMARY KEY, \
             public_key BLOB NOT NULL UNIQUE,\
             name TEXT)",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create users table")?;
 
@@ -629,7 +629,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             chat_id INTEGER NOT NULL, \
             FOREIGN KEY (user_id) REFERENCES users(id), \
             FOREIGN KEY (chat_id) REFERENCES chat_id(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create friends table")?;
 
@@ -642,7 +642,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             timestamp TEXT NOT NULL, \
             FOREIGN KEY (chat_id) REFERENCES chats(id), \
             FOREIGN KEY (sender_id) REFERENCES users(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create messages table")?;
 
@@ -656,7 +656,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             message BLOB NOT NULL, \
             action BOOL NOT NULL, \
             FOREIGN KEY (message_id) REFERENCES messages(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create text_messages table")?;
 
@@ -668,7 +668,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             message_id INTEGER NOT NULL, \
             receipt_id INTEGER, \
             FOREIGN KEY (message_id) REFERENCES messages(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create pending_messages table")?;
 
@@ -678,7 +678,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             id INTEGER PRIMARY KEY, \
             user_id INTEGER NOT NULL, \
             FOREIGN KEY (user_id) REFERENCES users(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create pending_friends table")?;
 
@@ -688,7 +688,7 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
             id INTEGER PRIMARY KEY, \
             user_id INTEGER NOT NULL, \
             FOREIGN KEY (user_id) REFERENCES users(id))",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create blocked users table")?;
 
