@@ -10,7 +10,10 @@ use tocks::{
 
 use toxcore::{Message, ToxId};
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::{
+    prelude::*,
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender}
+};
 
 use std::{
     cell::RefCell,
@@ -309,7 +312,7 @@ impl QTocks {
     }
 
     fn send_ui_request(&self, request: TocksUiEvent) {
-        if let Err(e) = self.ui_requests_tx.send(request) {
+        if let Err(e) = self.ui_requests_tx.unbounded_send(request) {
             error!("tocks app not responding to UI requests: {}", e);
         }
     }
@@ -477,8 +480,8 @@ impl QTocks {
             let event = {
                 let tocks_event_rx = &mut self.tocks_event_rx;
 
-                tokio::select! {
-                    event = tocks_event_rx.recv() => {
+                futures::select! {
+                    event = tocks_event_rx.next().fuse() => {
                         match event {
                             Some(e) => Event::Tocks(e),
                             None => Event::Close,

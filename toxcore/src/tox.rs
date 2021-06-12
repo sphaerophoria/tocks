@@ -679,6 +679,7 @@ unsafe extern "C" fn tox_friend_name_callback(
 pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU64};
+    use futures::FutureExt;
 
     pub(crate) struct ToxFixture {
         tox: Tox,
@@ -855,9 +856,9 @@ pub(crate) mod tests {
 
                     let mut fixture = ToxFixture::new();
 
-                    tokio::select! {
-                        _ = fixture.tox.run() => { }
-                        _ = cancel_future => { }
+                    futures::select! {
+                        _ = fixture.tox.run().fuse() => { }
+                        _ = cancel_future.fuse() => { }
                     };
 
                     // toxcore asks us to sleep for iteration_interval, we can have some

@@ -8,7 +8,10 @@ use log::*;
 use openal_sys as oal;
 use thiserror::Error;
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::{
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    prelude::*,
+};
 
 #[cfg_attr(test, mockall::automock)]
 mod oal_func_impl {
@@ -464,7 +467,7 @@ impl AudioManager {
             .iter_mut()
             .enumerate()
             .map(|(index, (channel, _source))| {
-                async move { (channel.recv().await, index) }.boxed_local()
+                async move { (channel.next().await, index) }.boxed_local()
             });
 
         let (res, _, _) = futures::future::select_all(futures).await;
@@ -486,7 +489,7 @@ impl AudioManager {
         frame_depth: usize,
         looping: bool,
     ) -> Result<UnboundedSender<AudioFrame>> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded();
 
         let oal_source =
             OalSource::new(frame_depth, looping).context("Failed to allocate OpenAL source")?;
@@ -553,7 +556,7 @@ impl AudioManager {
             };
 
             channel
-                .send(AudioFrame {
+                .unbounded_send(AudioFrame {
                     data,
                     sample_rate: frame.sample_rate,
                 })
@@ -699,7 +702,7 @@ mod test {
                 sent_buf.push(i);
             }
 
-            playback_channel.send(AudioFrame{
+            playback_channel.unbounded_send(AudioFrame{
                 data: AudioData::Mono16(sent_buf.clone()),
                 sample_rate: 44100
             }).unwrap();

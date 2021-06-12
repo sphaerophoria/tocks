@@ -1,7 +1,10 @@
 use structopt::StructOpt;
 use toxcore::{Event, SaveData};
 
-use tokio::sync::mpsc;
+use futures::{
+    channel::mpsc,
+    prelude::*,
+};
 
 #[derive(Debug, StructOpt)]
 enum Options {
@@ -15,14 +18,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let opt = Options::from_args();
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut event_rx) = mpsc::unbounded();
 
     let message_tx = event_tx.clone();
 
     let builder = toxcore::Tox::builder()?
         .log(true)
         .event_callback(move |event| {
-            let _ = message_tx.send(event);
+            let _ = message_tx.unbounded_send(event);
         });
 
     let mut tox = match opt {
@@ -42,11 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let event = {
-            tokio::select! {
-                event = event_rx.recv() => {
+            futures::select! {
+                event = event_rx.next().fuse() => {
                     Some(event.unwrap())
                 }
-                _ = tox.run() => { None }
+                _ = tox.run().fuse() => None,
             }
         };
 

@@ -9,11 +9,13 @@ use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStat
 
 use anyhow::{anyhow, Context, Error, Result};
 use fslock::LockFile;
-use futures::FutureExt;
+use futures::{
+    channel::mpsc,
+    prelude::*,
+};
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
-use tokio::sync::mpsc;
 
 use std::{collections::HashMap, fmt, fs, io::ErrorKind, path::PathBuf};
 
@@ -242,7 +244,7 @@ impl Account {
                     .push_message(friend.chat_handle(), *friend.id(), message)
                     .context("Failed to insert incoming message into storage")?;
                 self.account_event_tx
-                    .send(AccountEvent::ChatMessageInserted(
+                    .unbounded_send(AccountEvent::ChatMessageInserted(
                         *friend.chat_handle(),
                         chat_log_entry,
                     ))
@@ -265,10 +267,10 @@ impl Account {
                     .context("Failed to write friend request message to storage")?;
                 self.user_manager.add_pending_friend(friend.clone());
                 self.account_event_tx
-                    .send(AccountEvent::FriendAdded(friend.clone()))
+                    .unbounded_send(AccountEvent::FriendAdded(friend.clone()))
                     .context("Failed to propagate friend request")?;
                 self.account_event_tx
-                    .send(AccountEvent::ChatMessageInserted(
+                    .unbounded_send(AccountEvent::ChatMessageInserted(
                         *friend.chat_handle(),
                         chat_log_entry,
                     ))
@@ -281,7 +283,7 @@ impl Account {
                         .context("Failed to resolve message")?;
 
                     self.account_event_tx
-                        .send(AccountEvent::ChatMessageCompleted(handle, message_id))
+                        .unbounded_send(AccountEvent::ChatMessageCompleted(handle, message_id))
                         .context("Failed to propagate message completion")?;
                 } else {
                     error!("Received receipt to unknown message");
@@ -311,7 +313,7 @@ impl Account {
 
                 friend.set_status(Status::from(tox_friend.status()));
                 self.account_event_tx
-                    .send(AccountEvent::FriendStatusChanged(
+                    .unbounded_send(AccountEvent::FriendStatusChanged(
                         *friend.id(),
                         *friend.status(),
                     ))
@@ -333,7 +335,7 @@ impl Account {
                 }
 
                 self.account_event_tx
-                    .send(AccountEvent::UserNameChanged(
+                    .unbounded_send(AccountEvent::UserNameChanged(
                         *friend.id(),
                         friend.name().to_string(),
                     ))
@@ -346,9 +348,9 @@ impl Account {
 
     pub(crate) async fn run(&mut self) {
         loop {
-            tokio::select! {
-                _ = self.tox.run() => { return }
-                toxcore_callback = self.toxcore_callback_rx.recv() => {
+            futures::select! {
+                _ = self.tox.run().fuse() => return,
+                toxcore_callback = self.toxcore_callback_rx.next().fuse() => {
                     match toxcore_callback {
                         Some(event) => {
                             if let Err(e) = self.handle_toxcore_event(event) {
@@ -447,9 +449,9 @@ impl AccountManager {
         id: AccountId,
         bundle: &mut AccountBundle,
     ) -> Option<(AccountId, AccountEvent)> {
-        tokio::select! {
-            _  = bundle.account.run() => { None }
-            event = bundle.account_events.recv() => {
+        futures::select! {
+            _  = bundle.account.run().fuse() => None,
+            event = bundle.account_events.next().fuse() => {
                 event.map(|event| (id, event))
             }
         }
@@ -542,7 +544,7 @@ fn handle_savedata_failure(savedata: Result<Vec<u8>>) -> Result<Option<Vec<u8>>>
 fn create_tox(
     savedata: Result<Vec<u8>>,
 ) -> Result<(Tox, mpsc::UnboundedReceiver<toxcore::Event>), Error> {
-    let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded_channel();
+    let (toxcore_callback_tx, toxcore_callback_rx) = mpsc::unbounded();
 
     let builder = Tox::builder()?;
 
@@ -556,7 +558,7 @@ fn create_tox(
     let tox = builder
         .event_callback(move |event| {
             toxcore_callback_tx
-                .send(event)
+                .unbounded_send(event)
                 .unwrap_or_else(|_| error!("Failed to propagate incoming message"))
         })
         .log(true)

@@ -29,7 +29,10 @@ use toxcore::ToxId;
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
-use tokio::sync::mpsc;
+use futures::{
+    channel::mpsc,
+    prelude::*,
+};
 
 lazy_static! {
     pub static ref APP_DIRS: AppDirs = AppDirs::new(Some("tocks"), false).unwrap();
@@ -147,7 +150,7 @@ impl Tocks {
                 return Ok(true);
             }
             TocksUiEvent::CreateAccount(name, password) => {
-                let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
+                let (account_event_tx, account_event_rx) = mpsc::unbounded();
                 let account = Account::from_account_name(name, password, account_event_tx)
                     .context("Failed to create account")?;
 
@@ -212,7 +215,7 @@ impl Tocks {
                 }
             }
             TocksUiEvent::Login(account_name, password) => {
-                let (account_event_tx, account_event_rx) = mpsc::unbounded_channel();
+                let (account_event_tx, account_event_rx) = mpsc::unbounded();
                 let account =
                     Account::from_account_name(account_name.clone(), password, account_event_tx)
                         .with_context(|| format!("Failed to create account {}", account_name))?;
@@ -325,15 +328,15 @@ impl Tocks {
     fn send_tocks_event(tocks_event_tx: &mpsc::UnboundedSender<TocksEvent>, event: TocksEvent) {
         // We don't really care if this fails, who am I to say whether or not an
         // external library wants to service my events
-        let _ = tocks_event_tx.send(event);
+        let _ = tocks_event_tx.unbounded_send(event);
     }
 
     async fn next_event(&mut self) -> Event {
         let ui_events = &mut self.ui_event_rx;
         let accounts = &mut self.account_manager;
 
-        let event = tokio::select! {
-            request = ui_events.recv() => {
+        let event = futures::select! {
+            request = ui_events.next().fuse() => {
                 match request {
                     Some(request) => Event::Ui(request),
                     None => {
@@ -342,8 +345,8 @@ impl Tocks {
                     },
                 }
             },
-            _ = self.audio_manager.run() => { unreachable!() },
-            event = accounts.run() => { event },
+            _ = self.audio_manager.run().fuse() => unreachable!(),
+            event = accounts.run().fuse() => event,
         };
 
         event
