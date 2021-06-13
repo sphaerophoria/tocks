@@ -18,6 +18,9 @@ use toxcore_sys::{TOX_PUBLIC_KEY_SIZE, TOX_SECRET_KEY_SIZE};
 
 use hex::FromHex;
 
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
 use std::fmt;
 
 pub enum SaveData {
@@ -34,6 +37,7 @@ pub enum ProxyType {
 macro_rules! impl_key_type {
     ($name:ident, $underlying_type:ty, $expected_size:expr) => {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         pub struct $name {
             key: $underlying_type,
         }
@@ -129,6 +133,7 @@ pub(crate) struct FriendData {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Message {
     Normal(String),
     Action(String),

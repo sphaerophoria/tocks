@@ -128,6 +128,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
+ "serde",
  "time",
  "winapi",
 ]
@@ -1033,6 +1034,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde"
+version = "1.0.126"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec7505abeacaec74ae4778d9d9328fe5a5d04253220a85c4ee022239fc996d03"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.126"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "963a7dbc9895aeac7ac90e74f34a5d5261828f79df35cbed41e10189d3804d43"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "shlex"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1182,6 +1203,7 @@ dependencies = [
  "platform-dirs",
  "rusqlite",
  "rusty-fork 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1224,6 +1246,7 @@ dependencies = [
  "paste",
  "pretty_env_logger",
  "rusty-fork 0.3.0 (git+https://github.com/daxpedda/rusty-fork?branch=proc-macro-feature)",
+ "serde",
  "structopt",
  "thiserror",
  "tokio",

@@ -5,13 +5,14 @@ use toxcore::{Message, PublicKey};
 use anyhow::{anyhow, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction};
+use serde::{Serialize, Deserialize};
 
 use std::{fmt, path::Path};
 
 const SELF_USER_ID: i64 = 0;
 
 // Wrapper around sqlite message table id
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessageId {
     msg_id: i64,
 }
@@ -24,7 +25,7 @@ impl fmt::Display for ChatMessageId {
 
 // NOTE: This is written to the DB, so if the meanings of these values are
 // changed you may have data consistency issues
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChatLogEntry {
     id: ChatMessageId,
     sender: UserHandle,
@@ -59,7 +60,7 @@ impl ChatLogEntry {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ChatHandle {
     chat_id: i64,
 }
@@ -76,7 +77,7 @@ impl From<i64> for ChatHandle {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct UserHandle {
     user_id: i64,
 }

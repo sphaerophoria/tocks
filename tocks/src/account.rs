@@ -16,6 +16,7 @@ use futures::{
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
+use serde::{Serialize, Deserialize};
 
 use std::{collections::HashMap, fmt, fs, io::ErrorKind, path::PathBuf};
 
@@ -373,7 +374,7 @@ impl Drop for Account {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct AccountId {
     id: i64,
 }

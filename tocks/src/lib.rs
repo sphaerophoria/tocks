@@ -33,12 +33,14 @@ use futures::{
     channel::mpsc,
     prelude::*,
 };
+use serde::{Serialize, Deserialize};
 
 lazy_static! {
     pub static ref APP_DIRS: AppDirs = AppDirs::new(Some("tocks"), false).unwrap();
 }
 
 // UI things that tocks will need to react to
+#[derive(Serialize, Deserialize)]
 pub enum TocksUiEvent {
     Close,
     CreateAccount(String /*name*/, String /*password*/),
@@ -55,6 +57,7 @@ pub enum TocksUiEvent {
 }
 
 // Things external observers (like the UI) may want to observe
+#[derive(Serialize, Deserialize)]
 pub enum TocksEvent {
     Error(String),
     AccountListLoaded(Vec<String>),

@@ -6,6 +6,7 @@ use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
 use openal_sys as oal;
+use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
 use futures::{
@@ -275,7 +276,7 @@ impl Drop for OalSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AudioDevice {
     Default,
     Named(String),
@@ -290,6 +291,7 @@ impl ToString for AudioDevice {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum FormattedAudio {
     Mp3(Vec<u8>),
 }

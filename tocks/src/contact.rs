@@ -2,8 +2,9 @@ use crate::storage::{ChatHandle, UserHandle};
 
 use std::collections::HashMap;
 use toxcore::{Friend as ToxFriend, PublicKey, Status as ToxStatus};
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Status {
     Online,
     Away,
@@ -24,7 +25,7 @@ impl From<ToxStatus> for Status {
 }
 
 /// Data associated with a tox friend
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Friend {
     id: UserHandle,
     chat_handle: ChatHandle,
@@ -87,6 +88,7 @@ pub struct FriendBundle {
     pub tox_friend: Option<toxcore::Friend>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct User {
     id: UserHandle,
     public_key: PublicKey,
