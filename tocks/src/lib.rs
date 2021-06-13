@@ -5,6 +5,7 @@ pub mod contact;
 
 mod account;
 mod audio;
+mod event_server;
 mod message_parser;
 mod savemanager;
 mod storage;
@@ -13,6 +14,7 @@ pub use crate::{
     account::AccountId,
     audio::{AudioDevice, FormattedAudio},
     contact::{Friend, Status, User},
+    event_server::{EventClient, EventServer},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
@@ -57,7 +59,7 @@ pub enum TocksUiEvent {
 }
 
 // Things external observers (like the UI) may want to observe
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum TocksEvent {
     Error(String),
     AccountListLoaded(Vec<String>),

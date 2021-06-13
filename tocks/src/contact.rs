@@ -88,7 +88,7 @@ pub struct FriendBundle {
     pub tox_friend: Option<toxcore::Friend>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     id: UserHandle,
     public_key: PublicKey,

@@ -18,10 +18,11 @@ platform-dirs = "0.3.0"
 rusqlite = { version = "0.25.3", features = ["chrono"] }
 tempfile = "3.2.0"
 thiserror = "1.0.25"
-tokio = { version = "1.6.1", features = ["sync"] }
+tokio = { version = "1.6.1", features = ["sync", "io-util", "net"] }
 toxcore = { path = "../toxcore", features = ["serde"]}
 openal-sys = { path = "../openal-sys" }
 minimp3 = "0.5.1"
 mockall_double = "0.2.0"
 rusty-fork = "0.3.0"
 serde = { version= "1.0.126", features = ["derive"] }
+serde_json = "1.0.64"
