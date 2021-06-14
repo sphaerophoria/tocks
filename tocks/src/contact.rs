@@ -1,8 +1,8 @@
 use crate::storage::{ChatHandle, UserHandle};
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use toxcore::{Friend as ToxFriend, PublicKey, Status as ToxStatus};
-use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Status {

@@ -11,8 +11,8 @@ use tocks::{
 use toxcore::{Message, ToxId};
 
 use futures::{
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
     prelude::*,
-    channel::mpsc::{self, UnboundedReceiver, UnboundedSender}
 };
 
 use std::{

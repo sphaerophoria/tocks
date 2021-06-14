@@ -1,8 +1,5 @@
 use anyhow::Result;
-use std::{
-    env,
-    path::PathBuf
-};
+use std::{env, path::PathBuf};
 
 pub type Listener = tokio::net::UnixListener;
 pub type EventStream = tokio::net::UnixStream;

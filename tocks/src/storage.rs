@@ -5,7 +5,7 @@ use toxcore::{Message, PublicKey};
 use anyhow::{anyhow, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use std::{fmt, path::Path};
 

@@ -6,7 +6,7 @@ use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
 use openal_sys as oal;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use futures::{

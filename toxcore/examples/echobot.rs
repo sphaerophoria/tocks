@@ -1,10 +1,7 @@
 use structopt::StructOpt;
 use toxcore::{Event, SaveData};
 
-use futures::{
-    channel::mpsc,
-    prelude::*,
-};
+use futures::{channel::mpsc, prelude::*};
 
 #[derive(Debug, StructOpt)]
 enum Options {

@@ -28,14 +28,11 @@ use crate::{
 
 use toxcore::ToxId;
 
+use futures::{channel::mpsc, prelude::*};
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
-use futures::{
-    channel::mpsc,
-    prelude::*,
-};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 lazy_static! {
     pub static ref APP_DIRS: AppDirs = AppDirs::new(Some("tocks"), false).unwrap();

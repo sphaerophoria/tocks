@@ -1,10 +1,7 @@
+use futures::{channel::mpsc, prelude::*};
+use log::error;
 use tocks::{EventServer, Tocks};
 use ui::QmlUi;
-use log::error;
-use futures::{
-    channel::mpsc,
-    prelude::*
-};
 
 #[tokio::main]
 async fn main() {
@@ -19,9 +16,9 @@ async fn main() {
     let mut event_server = EventServer::new(
         tocks_event_channel.1,
         event_server_channel.0,
-        ui_event_channel.0)
-        .expect("Failed to start event server");
-
+        ui_event_channel.0,
+    )
+    .expect("Failed to start event server");
 
     let mut tocks = Tocks::new(ui_event_channel.1, tocks_event_channel.0);
 

@@ -9,14 +9,11 @@ use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStat
 
 use anyhow::{anyhow, Context, Error, Result};
 use fslock::LockFile;
-use futures::{
-    channel::mpsc,
-    prelude::*,
-};
+use futures::{channel::mpsc, prelude::*};
 use lazy_static::lazy_static;
 use log::*;
 use platform_dirs::AppDirs;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use std::{collections::HashMap, fmt, fs, io::ErrorKind, path::PathBuf};
 

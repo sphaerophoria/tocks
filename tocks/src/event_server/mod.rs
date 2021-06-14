@@ -1,35 +1,27 @@
 // Use unix sockets on platforms that support them, but fall back to less
 // desirable tcp sockets on others
-#[cfg(target_family = "unix")]
-mod unix;
 #[cfg(not(target_family = "unix"))]
 mod tcp;
-
 #[cfg(target_family = "unix")]
-use unix::*;
+mod unix;
+
 #[cfg(not(target_family = "unix"))]
 use tcp::*;
+#[cfg(target_family = "unix")]
+use unix::*;
 
 use crate::{TocksEvent, TocksUiEvent};
 
 use anyhow::{Context, Result};
-use log::{error, info};
 use futures::{
-    channel::mpsc::{UnboundedSender, UnboundedReceiver},
-    FutureExt,
-    Stream,
-    StreamExt,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
+    FutureExt, Stream, StreamExt,
 };
+use log::{error, info};
 
-use tokio::io::{
-    AsyncWriteExt,
-    AsyncBufReadExt,
-    BufReader,
-};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use std::{
-    task::Poll,
-};
+use std::task::Poll;
 
 pub struct EventServer {
     tocks_event_rx: UnboundedReceiver<TocksEvent>,
@@ -43,19 +35,19 @@ impl EventServer {
     pub fn new(
         tocks_event_rx: UnboundedReceiver<TocksEvent>,
         tocks_event_tx: UnboundedSender<TocksEvent>,
-        ui_event_tx: UnboundedSender<TocksUiEvent>) -> Result<EventServer> {
+        ui_event_tx: UnboundedSender<TocksUiEvent>,
+    ) -> Result<EventServer> {
+        let socket_path = get_socket_addr();
+        let event_client_listener = create_event_client_listener(socket_path)
+            .context("Failed to create event client listener")?;
 
-            let socket_path = get_socket_addr();
-            let event_client_listener = create_event_client_listener(socket_path)
-                .context("Failed to create event client listener")?;
-
-            Ok(EventServer {
-                tocks_event_rx,
-                tocks_event_tx,
-                ui_event_tx,
-                event_client_listener,
-                clients: Default::default(),
-            })
+        Ok(EventServer {
+            tocks_event_rx,
+            tocks_event_tx,
+            ui_event_tx,
+            event_client_listener,
+            clients: Default::default(),
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -89,11 +81,11 @@ impl EventServer {
 
         let event = event.unwrap();
 
-        let mut serialized = serde_json::to_vec(&event)
-            .context("Failed to serialize event")?;
+        let mut serialized = serde_json::to_vec(&event).context("Failed to serialize event")?;
         serialized.push(b'\n');
 
-        self.tocks_event_tx.unbounded_send(event)
+        self.tocks_event_tx
+            .unbounded_send(event)
             .context("Failed to propogate event")?;
 
         let mut clients_to_remove = vec![];
@@ -143,7 +135,8 @@ impl EventClient {
         let mut serialized = serde_json::to_vec(&event)?;
         serialized.push(b'\n');
 
-        stream.write_all(&serialized)
+        stream
+            .write_all(&serialized)
             .await
             .context("Failed to send tocks event")?;
 
@@ -156,7 +149,7 @@ impl Stream for EventClient {
 
     fn poll_next(
         mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>
+        cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Option<Self::Item>> {
         let mut v = Vec::new();
         let res = {
@@ -167,12 +160,11 @@ impl Stream for EventClient {
         match res {
             Poll::Ready(Ok(size)) => {
                 if size == 0 {
-                    return Poll::Ready(None)
+                    return Poll::Ready(None);
                 }
-                let res = serde_json::from_slice(&v)
-                    .map_err(anyhow::Error::from);
+                let res = serde_json::from_slice(&v).map_err(anyhow::Error::from);
                 Poll::Ready(Some(res))
-            },
+            }
             Poll::Ready(Err(e)) => {
                 error!("Failed to read from event server: {}", e);
                 Poll::Ready(None)
@@ -188,17 +180,17 @@ async fn wait_for_client(client_listener: &mut Listener) -> Result<EventStream> 
 
 async fn wait_for_ui_event_from_client(client: &mut EventStream) -> Result<Option<TocksUiEvent>> {
     let mut buf = Vec::new();
-    let res = BufReader::new(client.split().0).read_until(b'\n', &mut buf).await?;
+    let res = BufReader::new(client.split().0)
+        .read_until(b'\n', &mut buf)
+        .await?;
     if res == 0 {
-        return Ok(None)
+        return Ok(None);
     }
 
-    let event = serde_json::from_slice(&buf)
-        .context("Failed to parse ui event")?;
+    let event = serde_json::from_slice(&buf).context("Failed to parse ui event")?;
 
     Ok(Some(event))
 }
-
 
 async fn wait_for_ui_event(clients: &mut Vec<EventStream>) -> Result<Option<TocksUiEvent>> {
     if clients.is_empty() {
@@ -207,19 +199,19 @@ async fn wait_for_ui_event(clients: &mut Vec<EventStream>) -> Result<Option<Tock
         futures::future::pending::<()>().await;
     }
 
-   let next_event_futures = clients.iter_mut().map(|client| wait_for_ui_event_from_client(client).boxed());
+    let next_event_futures = clients
+        .iter_mut()
+        .map(|client| wait_for_ui_event_from_client(client).boxed());
     futures::future::select_all(next_event_futures).await.0
 }
 
-
 #[cfg(test)]
-mod tests
-{
+mod tests {
     use super::*;
     use futures::channel::mpsc;
+    use futures::SinkExt;
     use lazy_static::lazy_static;
     use std::sync::{Mutex, MutexGuard};
-    use futures::SinkExt;
 
     lazy_static! {
         static ref SINGLE_INSTANCE: Mutex<()> = Mutex::new(());
@@ -244,10 +236,11 @@ mod tests
             let mut server = EventServer::new(
                 tocks_event_channel.1,
                 event_server_channel.0,
-                ui_event_channel.0)?;
+                ui_event_channel.0,
+            )?;
 
             // Run the server until the connection handshake completes
-            let mut fixture  = futures::select! {
+            let mut fixture = futures::select! {
                 client = EventClient::connect().fuse() => {
                     Fixture {
                         client: client.unwrap(),
@@ -309,11 +302,10 @@ mod tests
                 ui_channel_rx: fixture1.ui_channel_rx,
                 tocks_event_tx: fixture1.tocks_event_tx,
                 _event_server_rx: fixture1.event_server_rx,
-                _single_instance_guard: fixture1._single_instance_guard
+                _single_instance_guard: fixture1._single_instance_guard,
             })
         }
     }
-
 
     #[tokio::test]
     async fn test_tocks_event_propagation() -> Result<()> {
@@ -322,7 +314,10 @@ mod tests
 
         let mut fixture = Fixture::new().await?;
 
-        fixture.tocks_event_tx.send(TocksEvent::Error("Test".to_owned())).await?;
+        fixture
+            .tocks_event_tx
+            .send(TocksEvent::Error("Test".to_owned()))
+            .await?;
 
         // Run the server until we receive our event in the client
         let received = futures::select! {
@@ -381,7 +376,9 @@ mod tests
     async fn test_multiple_client_recv() -> Result<()> {
         let mut fixture = Fixture2Client::new().await?;
 
-        fixture.tocks_event_tx.unbounded_send(TocksEvent::Error("Error".to_string()))?;
+        fixture
+            .tocks_event_tx
+            .unbounded_send(TocksEvent::Error("Error".to_string()))?;
 
         let clients_next = futures::future::join(fixture.client1.next(), fixture.client2.next());
 
@@ -390,13 +387,11 @@ mod tests
             _ = fixture.server.run().fuse() => panic!("Server exited early"),
         };
 
-        let check_event =  |event| {
-            match event {
-                Some(Ok(TocksEvent::Error(e))) => {
-                    assert_eq!(e, "Error")
-                }
-                _ => panic!("Unexpected event"),
+        let check_event = |event| match event {
+            Some(Ok(TocksEvent::Error(e))) => {
+                assert_eq!(e, "Error")
             }
+            _ => panic!("Unexpected event"),
         };
 
         check_event(result1);
@@ -410,7 +405,13 @@ mod tests
         let mut fixture = Fixture2Client::new().await?;
 
         fixture.client1.send(TocksUiEvent::Close).await?;
-        fixture.client2.send(TocksUiEvent::CreateAccount("Test".into(), "password".into())).await?;
+        fixture
+            .client2
+            .send(TocksUiEvent::CreateAccount(
+                "Test".into(),
+                "password".into(),
+            ))
+            .await?;
 
         let server = &mut fixture.server;
         let ui_channel_rx = &mut fixture.ui_channel_rx;
@@ -427,7 +428,7 @@ mod tests
         };
 
         match first {
-            Some(TocksUiEvent::Close) => {},
+            Some(TocksUiEvent::Close) => {}
             _ => panic!("Unexpected ui event"),
         }
 
@@ -435,7 +436,7 @@ mod tests
             Some(TocksUiEvent::CreateAccount(user, pass)) => {
                 assert_eq!(user, "Test");
                 assert_eq!(pass, "password");
-            },
+            }
             _ => panic!("Unexpected second ui event"),
         }
 

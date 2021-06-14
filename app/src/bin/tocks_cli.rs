@@ -3,13 +3,10 @@ use tocks::{EventClient, TocksUiEvent};
 use futures::prelude::*;
 use structopt::StructOpt;
 
-
 #[derive(StructOpt)]
 enum Opts {
     Read,
-    Write {
-        command: String
-    },
+    Write { command: String },
 }
 
 #[tokio::main]
@@ -19,19 +16,15 @@ async fn main() {
     let options = Opts::from_args();
 
     match options {
-        Opts::Read => {
-            print_events(client).await
-        }
-        Opts::Write{command} => {
-            send_command(client, command).await
-        }
+        Opts::Read => print_events(client).await,
+        Opts::Write { command } => send_command(client, command).await,
     };
 }
 
 async fn print_events(mut client: EventClient) {
     while let Some(item) = client.next().await {
         match item {
-            Ok(item) =>  {
+            Ok(item) => {
                 println!("{}", serde_json::to_string(&item).unwrap());
             }
             Err(e) => {
@@ -45,8 +38,7 @@ async fn print_events(mut client: EventClient) {
 }
 
 async fn send_command(mut client: EventClient, command: String) {
-    let event = serde_json::from_str::<TocksUiEvent>(&command)
-        .expect("Invalid tocks ui event");
+    let event = serde_json::from_str::<TocksUiEvent>(&command).expect("Invalid tocks ui event");
 
     client.send(event).await.expect("Failed to send event");
 }
