@@ -3,8 +3,9 @@
 
 pub mod contact;
 
+pub mod audio;
+
 mod account;
-mod audio;
 mod event_server;
 mod message_parser;
 mod savemanager;
@@ -12,19 +13,14 @@ mod storage;
 
 pub use crate::{
     account::AccountId,
-    audio::{AudioDevice, FormattedAudio},
     contact::{Friend, Status, User},
     event_server::{EventClient, EventServer},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
 use anyhow::{Context, Result};
-use audio::RepeatingAudioHandle;
 
-use crate::{
-    account::{Account, AccountManager},
-    audio::AudioManager,
-};
+use crate::account::{Account, AccountManager};
 
 use toxcore::ToxId;
 
@@ -48,11 +44,6 @@ pub enum TocksUiEvent {
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
-    PlaySound(FormattedAudio),
-    // Temporary events to test audio playback
-    PlaySoundRepeating(FormattedAudio),
-    StopRepeatingSound,
-    AudioDeviceSelected(AudioDevice),
 }
 
 // Things external observers (like the UI) may want to observe
@@ -69,7 +60,6 @@ pub enum TocksEvent {
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
     FriendStatusChanged(AccountId, UserHandle, Status),
     UserNameChanged(AccountId, UserHandle, String),
-    AudioDeviceAdded(AudioDevice),
 }
 
 // Things that Tocks can handle in it's core iteration loop
@@ -87,10 +77,8 @@ impl From<TocksEvent> for Event {
 
 pub struct Tocks {
     account_manager: AccountManager,
-    audio_manager: AudioManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
     tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
-    repeating_sound: Option<RepeatingAudioHandle>,
 }
 
 impl Tocks {
@@ -98,14 +86,10 @@ impl Tocks {
         ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
         tocks_event_tx: mpsc::UnboundedSender<TocksEvent>,
     ) -> Tocks {
-        let mut tocks = Tocks {
+        let tocks = Tocks {
             account_manager: AccountManager::new(),
-            // FIXME: better error handling
-            // FIXME: initialize audiomanager with saved output device
-            audio_manager: AudioManager::new().expect("Failed to start audio manager"),
             ui_event_rx,
             tocks_event_tx,
-            repeating_sound: None,
         };
 
         // Intentionally discard errors here. We'll get more errors later that
@@ -117,16 +101,6 @@ impl Tocks {
             &tocks.tocks_event_tx,
             TocksEvent::AccountListLoaded(account_list),
         );
-
-        // FIXME: dynamically detect changes and add to outputs
-        // FIXME: better error handling
-        for device in tocks
-            .audio_manager
-            .output_devices()
-            .expect("Failed to retrieve audio devices")
-        {
-            Self::send_tocks_event(&tocks.tocks_event_tx, TocksEvent::AudioDeviceAdded(device))
-        }
 
         tocks
     }
@@ -295,19 +269,6 @@ impl Tocks {
                     error!("Could not find account {}", account_id.id());
                 }
             }
-            TocksUiEvent::PlaySound(audio) => self.audio_manager.play_formatted_audio(audio),
-            TocksUiEvent::PlaySoundRepeating(audio) => {
-                self.repeating_sound =
-                    Some(self.audio_manager.play_repeating_formatted_audio(audio));
-            }
-            TocksUiEvent::StopRepeatingSound => {
-                self.repeating_sound = None;
-            }
-            TocksUiEvent::AudioDeviceSelected(device) => {
-                self.audio_manager
-                    .set_output_device(device)
-                    .context("Failed to set audio output device")?;
-            }
         };
 
         Ok(false)
@@ -347,7 +308,6 @@ impl Tocks {
                     },
                 }
             },
-            _ = self.audio_manager.run().fuse() => unreachable!(),
             event = accounts.run().fuse() => event,
         };
 

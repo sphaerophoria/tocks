@@ -4,18 +4,28 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    AccountId, AudioDevice, ChatHandle, ChatLogEntry, ChatMessageId, FormattedAudio, Status,
-    TocksEvent, TocksUiEvent, UserHandle,
+    audio::{AudioDevice, AudioManager, FormattedAudio, RepeatingAudioHandle},
+    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent, TocksUiEvent,
+    UserHandle,
 };
 
 use toxcore::{Message, ToxId};
+
+use anyhow::{Context, Result};
 
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     prelude::*,
 };
 
-use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, fs::File, io::Read, path::{Path, PathBuf}, sync::{Arc, Barrier}, thread::JoinHandle};
+use std::{
+    borrow::BorrowMut,
+    collections::HashMap,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    thread::JoinHandle,
+};
 
 use ::log::*;
 
@@ -24,6 +34,17 @@ use qmetaobject::*;
 fn resource_path<P: AsRef<Path>>(relative_path: P) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.join(relative_path.as_ref())
+}
+
+fn load_notification_sound() -> FormattedAudio {
+    let mut notification_data = Vec::new();
+    // FIXME: better error handling
+    File::open(resource_path("qml/res/incoming_message.mp3"))
+        .unwrap()
+        .read_to_end(&mut notification_data)
+        .unwrap();
+
+    FormattedAudio::Mp3(notification_data)
 }
 
 #[derive(QObject, Default)]
@@ -144,6 +165,15 @@ impl QAbstractItemModel for ChatModel {
     }
 }
 
+// Events to be sent to our internal QTocks loop. We cannot run our QTocks event
+// loop from within our class due to qmetaobject mutability issues
+enum QTocksEvent {
+    SetAudioOutput(AudioDevice),
+    PlayNotificationSound,
+    StartAudioTest,
+    StopAudioTest,
+}
+
 #[allow(non_snake_case)]
 #[derive(QObject)]
 struct QTocks {
@@ -168,6 +198,7 @@ struct QTocks {
     visible: qt_property!(bool; WRITE set_visible),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
+    qtocks_event_tx: UnboundedSender<QTocksEvent>,
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: HashMap<AccountId, QObjectBox<Account>>,
     offline_accounts: Vec<String>,
@@ -176,7 +207,11 @@ struct QTocks {
 }
 
 impl QTocks {
-    fn new(ui_requests_tx: UnboundedSender<TocksUiEvent>) -> QTocks {
+    fn new(
+        ui_requests_tx: UnboundedSender<TocksUiEvent>,
+        qtocks_event_tx: UnboundedSender<QTocksEvent>,
+        audio_devices: Vec<AudioDevice>,
+    ) -> QTocks {
         QTocks {
             base: Default::default(),
             accounts: Default::default(),
@@ -198,10 +233,11 @@ impl QTocks {
             setAudioOutput: Default::default(),
             visible: Default::default(),
             ui_requests_tx,
+            qtocks_event_tx,
             chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
-            audio_output_storage: Default::default(),
+            audio_output_storage: audio_devices,
             visible_storage: false,
         }
     }
@@ -227,7 +263,6 @@ impl QTocks {
     }
 
     fn login(&mut self, account_name: QString, password: QString) {
-
         self.send_ui_request(TocksUiEvent::Login(
             account_name.to_string(),
             password.to_string(),
@@ -284,9 +319,7 @@ impl QTocks {
         name: String,
     ) {
         let account = QObjectBox::new(Account::new(account_id, user, address, name));
-        unsafe {
-            account.pinned().get_or_create_cpp_object();
-        }
+        account.pinned().get_or_create_cpp_object();
         self.accounts_storage.insert(account_id, account);
         self.accountsChanged();
     }
@@ -301,6 +334,12 @@ impl QTocks {
     fn send_ui_request(&mut self, request: TocksUiEvent) {
         if let Err(e) = self.ui_requests_tx.unbounded_send(request) {
             error!("tocks app not responding to UI requests: {}", e);
+        }
+    }
+
+    fn send_qtocks_request(&mut self, request: QTocksEvent) {
+        if let Err(e) = self.qtocks_event_tx.unbounded_send(request) {
+            error!("QTocks loop not responding to requests: {}", e);
         }
     }
 
@@ -319,32 +358,17 @@ impl QTocks {
             .cloned()
             .expect("Invalid audio device id passed from qml");
 
-        self.send_ui_request(TocksUiEvent::AudioDeviceSelected(device));
+        self.send_qtocks_request(QTocksEvent::SetAudioOutput(device));
     }
 
     #[allow(non_snake_case)]
     fn startAudioTest(&mut self) {
-        let mut notification_data = Vec::new();
-        // FIXME: better error handling
-        File::open(resource_path("qml/res/incoming_message.mp3"))
-            .unwrap()
-            .read_to_end(&mut notification_data)
-            .unwrap();
-
-        self.send_ui_request(TocksUiEvent::PlaySoundRepeating(FormattedAudio::Mp3(
-            notification_data,
-        )))
+        self.send_qtocks_request(QTocksEvent::StartAudioTest);
     }
 
     #[allow(non_snake_case)]
     fn stopAudioTest(&mut self) {
-        self.send_ui_request(TocksUiEvent::StopRepeatingSound)
-    }
-
-    fn add_audio_output(&mut self, device: AudioDevice) {
-        self.audio_output_storage.push(device);
-
-        self.audioOutputsChanged();
+        self.send_qtocks_request(QTocksEvent::StopAudioTest);
     }
 
     fn set_visible(&mut self, visible: bool) {
@@ -398,16 +422,7 @@ impl QTocks {
                     .self_id();
 
                 if *entry.sender() != self_id && !self.visible_storage {
-                    let mut notification_data = Vec::new();
-                    // FIXME: better error handling
-                    File::open(resource_path("qml/res/incoming_message.mp3"))
-                        .unwrap()
-                        .read_to_end(&mut notification_data)
-                        .unwrap();
-
-                    self.send_ui_request(TocksUiEvent::PlaySound(FormattedAudio::Mp3(
-                        notification_data,
-                    )))
+                    self.send_qtocks_request(QTocksEvent::PlayNotificationSound);
                 }
 
                 let chat_model_pinned = self.chat_model.pinned();
@@ -440,32 +455,41 @@ impl QTocks {
                     .borrow_mut()
                     .set_user_name(user_id, &name);
             }
-            TocksEvent::AudioDeviceAdded(device) => {
-                self.add_audio_output(device);
-            }
         }
     }
 }
 
 pub struct QmlUi {
     ui_handle: Option<JoinHandle<()>>,
+    audio_manager: AudioManager,
+    repeating_audio_handle: Option<RepeatingAudioHandle>,
+    tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
+    qtocks_event_rx: mpsc::UnboundedReceiver<QTocksEvent>,
+    handle_ui_callback: Box<dyn Fn(TocksEvent) + Send + Sync>,
 }
 
 impl QmlUi {
     pub fn new(
         ui_event_tx: mpsc::UnboundedSender<TocksUiEvent>,
-        mut tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
-    ) -> QmlUi {
-        // barrier used to ensure we do not claim to be complete until the qml thread is servicing the tocks events
-        let barrier = Arc::new(Barrier::new(2));
-        let qt_barrier = Arc::clone(&barrier);
+        tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
+    ) -> Result<QmlUi> {
+        let (handle_callback_tx, handle_callback_rx) = std::sync::mpsc::channel();
+        let (qtocks_event_tx, qtocks_event_rx) = mpsc::unbounded();
+
+        let mut audio_manager = AudioManager::new().context("Failed to start audio manager")?;
+        // Ideally we would trigger something in QTocks when the devices are
+        // updated, but at the time of writing we already didn't support it.
+        // We'll fix it later.
+        let audio_devices = audio_manager
+            .output_devices()
+            .context("Failed to initialize audio devices")?;
 
         // Spawn the QML engine into it's own thread. Our implementation will
         // live on the main thread and be owned directly by the main Tocks
         // instance. Our UI event loop needs to be run independently by Qt so we
         // spawn a new thread and will pass messages back and forth as needed
         let ui_handle = std::thread::spawn(move || {
-            let qtocks = QObjectBox::new(QTocks::new(ui_event_tx));
+            let qtocks = QObjectBox::new(QTocks::new(ui_event_tx, qtocks_event_tx, audio_devices));
             let qtocks_pinned = qtocks.pinned();
 
             let mut engine = QmlEngine::new();
@@ -476,27 +500,92 @@ impl QmlUi {
                 qtocks_pinned.borrow().chat_model.pinned(),
             );
 
-            let qtocks_clone = QPointer::from(&**qtocks_pinned.borrow_mut());
-            execute_async(async move {
-                let qtocks_pinned = qtocks_clone.as_pinned().unwrap();
-                while let Some(event) = tocks_event_rx.next().await {
-                    qtocks_pinned.borrow_mut().handle_ui_callback(event);
-                }
-            });
-
             // FIXME: bundle with qrc on release builds
             engine.load_file(concat!(env!("CARGO_MANIFEST_DIR"), "/qml/Tocks.qml").into());
 
-            qt_barrier.wait();
+            let qtocks_clone = QPointer::from(&**qtocks_pinned.borrow_mut());
+            let handle_ui_callback = queued_callback(move |event| {
+                let pinned = qtocks_clone.as_pinned().unwrap();
+                pinned.borrow_mut().handle_ui_callback(event);
+            });
+
+            handle_callback_tx
+                .send(handle_ui_callback)
+                .expect("Failed to hand off ui callback");
 
             engine.exec();
         });
 
-        barrier.wait();
+        let handle_ui_callback = Box::new(handle_callback_rx.recv().unwrap());
 
-        QmlUi {
+        Ok(QmlUi {
             ui_handle: Some(ui_handle),
+            audio_manager,
+            repeating_audio_handle: None,
+            tocks_event_rx,
+            qtocks_event_rx,
+            handle_ui_callback,
+        })
+    }
+
+    pub async fn run(&mut self) {
+        loop {
+            futures::select! {
+                _ = self.audio_manager.run().fuse() => {
+
+                }
+                event = self.tocks_event_rx.next() => {
+                    if event.is_none() {
+                        warn!("No more tocks events, stopping event loop");
+                        return;
+                    }
+                    let event = event.unwrap();
+                    (*self.handle_ui_callback)(event);
+                }
+                event = self.qtocks_event_rx.next() => {
+                    self.handle_qtocks_event(event)
+                }
+            }
         }
+    }
+
+    fn handle_qtocks_event(&mut self, event: Option<QTocksEvent>) {
+        match event {
+            Some(QTocksEvent::SetAudioOutput(device)) => self.set_audio_output(device),
+            Some(QTocksEvent::PlayNotificationSound) => self.play_notification_sound(),
+            Some(QTocksEvent::StartAudioTest) => self.start_audio_test(),
+            Some(QTocksEvent::StopAudioTest) => self.stop_audio_test(),
+            None => {
+                warn!("No QTocks event received");
+            }
+        }
+    }
+
+    fn set_audio_output(&mut self, device: AudioDevice) {
+        let res = self
+            .audio_manager
+            .set_output_device(device)
+            .context("Failed to set output device");
+
+        if let Err(e) = res {
+            (*self.handle_ui_callback)(TocksEvent::Error(e.to_string()));
+        }
+    }
+
+    fn stop_audio_test(&mut self) {
+        self.repeating_audio_handle = None;
+    }
+
+    fn start_audio_test(&mut self) {
+        self.repeating_audio_handle = Some(
+            self.audio_manager
+                .play_repeating_formatted_audio(load_notification_sound()),
+        );
+    }
+
+    fn play_notification_sound(&mut self) {
+        self.audio_manager
+            .play_formatted_audio(load_notification_sound());
     }
 }
 

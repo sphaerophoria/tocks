@@ -11,7 +11,8 @@ async fn main() {
     let ui_event_channel = mpsc::unbounded();
     let event_server_channel = mpsc::unbounded();
 
-    let _ui = QmlUi::new(ui_event_channel.0.clone(), event_server_channel.1);
+    let mut ui = QmlUi::new(ui_event_channel.0.clone(), event_server_channel.1)
+        .expect("Failed to start QML UI");
 
     let mut event_server = EventServer::new(
         tocks_event_channel.1,
@@ -29,5 +30,6 @@ async fn main() {
                 error!("Event server died {}", e);
             }
         }
+        _ = ui.run().fuse() => {},
     }
 }
