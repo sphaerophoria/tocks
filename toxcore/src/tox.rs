@@ -678,8 +678,8 @@ unsafe extern "C" fn tox_friend_name_callback(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicU64};
     use futures::FutureExt;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
 
     pub(crate) struct ToxFixture {
         tox: Tox,

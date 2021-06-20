@@ -11,7 +11,7 @@ use tocks::{
 use toxcore::{Message, ToxId};
 
 use futures::{
-    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    channel::mpsc::{self, UnboundedSender},
     prelude::*,
 };
 
@@ -179,7 +179,6 @@ struct QTocks {
     visible: qt_property!(bool; WRITE set_visible),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
-    tocks_event_rx: UnboundedReceiver<TocksEvent>,
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
     offline_accounts: RwLock<Vec<String>>,
@@ -188,10 +187,7 @@ struct QTocks {
 }
 
 impl QTocks {
-    fn new(
-        ui_requests_tx: UnboundedSender<TocksUiEvent>,
-        tocks_event_rx: UnboundedReceiver<TocksEvent>,
-    ) -> QTocks {
+    fn new(ui_requests_tx: UnboundedSender<TocksUiEvent>) -> QTocks {
         QTocks {
             base: Default::default(),
             accounts: Default::default(),
@@ -213,7 +209,6 @@ impl QTocks {
             setAudioOutput: Default::default(),
             visible: Default::default(),
             ui_requests_tx,
-            tocks_event_rx,
             chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
@@ -468,34 +463,6 @@ impl QTocks {
             }
         }
     }
-
-    async fn run(&mut self) {
-        loop {
-            enum Event {
-                Tocks(TocksEvent),
-                Close,
-            }
-
-            // Some gymastics to help with lifetime management/mutability
-            let event = {
-                let tocks_event_rx = &mut self.tocks_event_rx;
-
-                futures::select! {
-                    event = tocks_event_rx.next().fuse() => {
-                        match event {
-                            Some(e) => Event::Tocks(e),
-                            None => Event::Close,
-                        }
-                    },
-                }
-            };
-
-            match event {
-                Event::Close => break,
-                Event::Tocks(event) => self.handle_ui_callback(event),
-            }
-        }
-    }
 }
 
 pub struct QmlUi {
@@ -505,7 +472,7 @@ pub struct QmlUi {
 impl QmlUi {
     pub fn new(
         ui_event_tx: mpsc::UnboundedSender<TocksUiEvent>,
-        tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
+        mut tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
     ) -> QmlUi {
         // barrier used to ensure we do not claim to be complete until the qml thread is servicing the tocks events
         let barrier = Arc::new(Barrier::new(2));
@@ -516,7 +483,7 @@ impl QmlUi {
         // instance. Our UI event loop needs to be run independently by Qt so we
         // spawn a new thread and will pass messages back and forth as needed
         let ui_handle = std::thread::spawn(move || {
-            let qtocks = QObjectBox::new(QTocks::new(ui_event_tx, tocks_event_rx));
+            let qtocks = QObjectBox::new(QTocks::new(ui_event_tx));
             let qtocks_pinned = qtocks.pinned();
 
             let mut engine = QmlEngine::new();
@@ -527,9 +494,12 @@ impl QmlUi {
                 qtocks_pinned.borrow().chat_model.pinned(),
             );
 
+            let qtocks_clone = QPointer::from(&**qtocks_pinned.borrow_mut());
             execute_async(async move {
-                let qtocks_pinned = qtocks.pinned();
-                qtocks_pinned.borrow_mut().run().await;
+                let qtocks_pinned = qtocks_clone.as_pinned().unwrap();
+                while let Some(event) = tocks_event_rx.next().await {
+                    qtocks_pinned.borrow_mut().handle_ui_callback(event);
+                }
             });
 
             // FIXME: bundle with qrc on release builds
