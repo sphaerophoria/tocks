@@ -146,7 +146,9 @@ impl Tocks {
                 );
             }
             TocksUiEvent::AcceptPendingFriend(account_id, user_handle) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
                 let friend = account
@@ -155,15 +157,13 @@ impl Tocks {
 
                 Self::send_tocks_event(
                     &self.tocks_event_tx,
-                    TocksEvent::FriendStatusChanged(
-                        account_id,
-                        *friend.id(),
-                        *friend.status(),
-                    ),
+                    TocksEvent::FriendStatusChanged(account_id, *friend.id(), *friend.status()),
                 );
             }
             TocksUiEvent::RequestFriend(account_id, tox_id, message) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
                 let friend = account
@@ -176,7 +176,9 @@ impl Tocks {
                 );
             }
             TocksUiEvent::BlockUser(account_id, user_handle) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
                 let blocked_user = account
@@ -194,7 +196,9 @@ impl Tocks {
                 );
             }
             TocksUiEvent::PurgeUser(account_id, user_handle) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
                 account
@@ -244,19 +248,20 @@ impl Tocks {
                 }
             }
             TocksUiEvent::MessageSent(account_id, chat_handle, message) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
-                let entries =
-                    account
-                        .send_message(&chat_handle, message)
-                        .with_context(|| {
-                            format!(
-                                "Failed to send message to {} on account {}",
-                                chat_handle.id(),
-                                account_id.id()
-                            )
-                        })?;
+                let entries = account
+                    .send_message(&chat_handle, message)
+                    .with_context(|| {
+                        format!(
+                            "Failed to send message to {} on account {}",
+                            chat_handle.id(),
+                            account_id.id()
+                        )
+                    })?;
 
                 for entry in entries {
                     Self::send_tocks_event(
@@ -266,7 +271,9 @@ impl Tocks {
                 }
             }
             TocksUiEvent::LoadMessages(account_id, chat_handle) => {
-                let account = self.account_manager.get_mut(&account_id)
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
                     .with_context(|| format!("Failed to find account {}", account_id))?;
 
                 let messages = account.load_messages(&chat_handle)?;

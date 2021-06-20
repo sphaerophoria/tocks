@@ -1368,7 +1368,6 @@ pub(crate) mod tests {
         }
     }
 
-
     // FIXME: test friend name dispatch
 
     macro_rules! test_array_getter {
