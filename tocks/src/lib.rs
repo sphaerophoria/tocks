@@ -6,6 +6,7 @@ pub mod contact;
 pub mod audio;
 
 mod account;
+mod error;
 mod event_server;
 mod message_parser;
 mod savemanager;
@@ -18,9 +19,12 @@ pub use crate::{
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
-use crate::account::{Account, AccountManager};
+use crate::{
+    account::{Account, AccountManager},
+    error::ExitError,
+};
 
 use toxcore::ToxId;
 
@@ -64,19 +68,6 @@ pub enum TocksEvent {
     UserNameChanged(AccountId, UserHandle, String),
 }
 
-// Things that Tocks can handle in it's core iteration loop
-enum Event {
-    Ui(TocksUiEvent),
-    Tocks(TocksEvent),
-    None,
-}
-
-impl From<TocksEvent> for Event {
-    fn from(event: TocksEvent) -> Event {
-        Event::Tocks(event)
-    }
-}
-
 pub struct Tocks {
     account_manager: AccountManager,
     ui_event_rx: mpsc::UnboundedReceiver<TocksUiEvent>,
@@ -109,23 +100,45 @@ impl Tocks {
 
     pub async fn run(&mut self) {
         loop {
-            let event = self.next_event().await;
-
-            match self.handle_event(event) {
-                Ok(true) => return,
-                Ok(false) => (),
-                Err(e) => {
-                    error!("{:?}", e)
+            if let Err(e) = self.run_next().await {
+                if let Some(e) = e.downcast_ref::<ExitError>() {
+                    if let ExitError::Ungraceful = e {
+                        error!("{:?}", e);
+                    }
+                    return;
                 }
+                error!("{:?}", e);
             }
         }
     }
 
+    async fn run_next(&mut self) -> Result<()> {
+        let ui_events = &mut self.ui_event_rx;
+        let accounts = &mut self.account_manager;
+
+        futures::select! {
+            request = ui_events.next().fuse() => {
+                let request = request
+                    .context(error::ExitError::Ungraceful)
+                    .context("Unexpected dropped UI requester")?;
+                self.handle_ui_request(request)
+                    .context("Failed to handle UI request")?;
+            },
+            event = accounts.run().fuse() => {
+                let event = event
+                    .context("Servicing accounts failed")?;
+                Self::send_tocks_event(&self.tocks_event_tx, event)
+            },
+        };
+
+        Ok(())
+    }
+
     /// Returns `true` if app should be closed
-    fn handle_ui_request(&mut self, event: TocksUiEvent) -> Result<bool> {
+    fn handle_ui_request(&mut self, event: TocksUiEvent) -> Result<()> {
         match event {
             TocksUiEvent::Close => {
-                return Ok(true);
+                bail!(ExitError::Graceful);
             }
             TocksUiEvent::CreateAccount(name, password) => {
                 let (account_event_tx, account_event_rx) = mpsc::unbounded();
@@ -284,46 +297,12 @@ impl Tocks {
             }
         };
 
-        Ok(false)
-    }
-
-    fn handle_event(&mut self, event: Event) -> Result<bool> {
-        match event {
-            Event::Ui(request) => self
-                .handle_ui_request(request)
-                .context("Failed to handle UI request"),
-            Event::Tocks(e) => {
-                // Propagate event from lower down
-                Self::send_tocks_event(&self.tocks_event_tx, e);
-                Ok(false)
-            }
-            Event::None => Ok(false),
-        }
+        Ok(())
     }
 
     fn send_tocks_event(tocks_event_tx: &mpsc::UnboundedSender<TocksEvent>, event: TocksEvent) {
         // We don't really care if this fails, who am I to say whether or not an
         // external library wants to service my events
         let _ = tocks_event_tx.unbounded_send(event);
-    }
-
-    async fn next_event(&mut self) -> Event {
-        let ui_events = &mut self.ui_event_rx;
-        let accounts = &mut self.account_manager;
-
-        let event = futures::select! {
-            request = ui_events.next().fuse() => {
-                match request {
-                    Some(request) => Event::Ui(request),
-                    None => {
-                        error!("Unexpected dropped UI requester, closing app");
-                        Event::Ui(TocksUiEvent::Close)
-                    },
-                }
-            },
-            event = accounts.run().fuse() => event,
-        };
-
-        event
     }
 }

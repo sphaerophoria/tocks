@@ -1,8 +1,9 @@
 use crate::{
     contact::{Friend, Status, User, UserManager},
+    error::ExitError,
     savemanager::SaveManager,
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, Storage, UserHandle},
-    Event, TocksEvent, APP_DIRS,
+    TocksEvent, APP_DIRS,
 };
 
 use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStatus, Tox, ToxId};
@@ -28,6 +29,26 @@ pub(crate) enum AccountEvent {
     ChatMessageCompleted(ChatHandle, ChatMessageId),
     FriendStatusChanged(UserHandle, Status),
     UserNameChanged(UserHandle, String),
+}
+
+impl From<(AccountId, AccountEvent)> for TocksEvent {
+    fn from(v: (AccountId, AccountEvent)) -> TocksEvent {
+        match v.1 {
+            AccountEvent::FriendAdded(f) => TocksEvent::FriendAdded(v.0, f),
+            AccountEvent::ChatMessageInserted(chat, entry) => {
+                TocksEvent::MessageInserted(v.0, chat, entry)
+            }
+            AccountEvent::ChatMessageCompleted(chat, id) => {
+                TocksEvent::MessageCompleted(v.0, chat, id)
+            }
+            AccountEvent::FriendStatusChanged(user, status) => {
+                TocksEvent::FriendStatusChanged(v.0, user, status)
+            }
+            AccountEvent::UserNameChanged(user, name) => {
+                TocksEvent::UserNameChanged(v.0, user, name)
+            }
+        }
+    }
 }
 
 pub(crate) struct Account {
@@ -389,18 +410,20 @@ impl Account {
         Ok(())
     }
 
-    pub(crate) async fn run(&mut self) {
+    pub(crate) async fn run(&mut self) -> Result<()> {
         loop {
             futures::select! {
-                _ = self.tox.run().fuse() => return,
+                _ = self.tox.run().fuse() => {
+                    Err(ExitError::Ungraceful)
+                        .context("Tox account unexpectedly stopped")?;
+                },
                 toxcore_callback = self.toxcore_callback_rx.next().fuse() => {
-                    match toxcore_callback {
-                        Some(event) => {
-                            if let Err(e) = self.handle_toxcore_event(event) {
-                                error!("Failed to handle toxcore event: {}", e)
-                            }
-                        }
-                        None => return
+                    let event = toxcore_callback
+                        .context(ExitError::Ungraceful)
+                        .context("Toxcore callback channel unexpectedly dropped")?;
+
+                    if let Err(e) = self.handle_toxcore_event(event) {
+                        error!("Failed to handle toxcore event: {}", e)
                     }
                 }
             }
@@ -500,7 +523,7 @@ impl AccountManager {
         }
     }
 
-    pub async fn run(&mut self) -> Event {
+    pub async fn run(&mut self) -> Result<TocksEvent> {
         let account_events = if self.accounts.is_empty() {
             // futures::future::select_all is not happy with 0 elements
             futures::future::pending().boxed_local()
@@ -517,27 +540,12 @@ impl AccountManager {
         // select_all returns a list of all remaining events as the second
         // element. We don't care about the accounts where nothing happened,
         // we'll catch those next time
-        match account_events.await.0 {
-            Some((id, AccountEvent::ChatMessageInserted(chat_handle, m))) => {
-                TocksEvent::MessageInserted(id, chat_handle, m).into()
-            }
-            Some((id, AccountEvent::FriendAdded(friend))) => {
-                TocksEvent::FriendAdded(id, friend).into()
-            }
-            Some((id, AccountEvent::ChatMessageCompleted(chat_handle, msg_id))) => {
-                TocksEvent::MessageCompleted(id, chat_handle, msg_id).into()
-            }
-            Some((id, AccountEvent::FriendStatusChanged(user_handle, status))) => {
-                TocksEvent::FriendStatusChanged(id, user_handle, status).into()
-            }
-            Some((id, AccountEvent::UserNameChanged(user_handle, name))) => {
-                TocksEvent::UserNameChanged(id, user_handle, name).into()
-            }
-            None => {
-                error!("Error in account handler");
-                Event::None
-            }
-        }
+        Ok(account_events
+            .await
+            .0
+            .context(ExitError::Ungraceful)
+            .context("All accounts unexpectedly dropped")?
+            .into())
     }
 }
 
