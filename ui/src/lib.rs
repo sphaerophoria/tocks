@@ -15,18 +15,7 @@ use futures::{
     prelude::*,
 };
 
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fs::File,
-    io::Read,
-    path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Barrier, RwLock,
-    },
-    thread::JoinHandle,
-};
+use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, fs::File, io::Read, path::{Path, PathBuf}, sync::{Arc, Barrier}, thread::JoinHandle};
 
 use ::log::*;
 
@@ -163,27 +152,27 @@ struct QTocks {
     accountsChanged: qt_signal!(),
     offlineAccounts: qt_property!(QVariantList; READ get_offline_accounts NOTIFY offlineAccountsChanged),
     offlineAccountsChanged: qt_signal!(),
-    newAccount: qt_method!(fn(&self, name: QString, password: QString)),
-    close: qt_method!(fn(&self)),
-    addPendingFriend: qt_method!(fn(&self, account: i64, user: i64)),
-    blockUser: qt_method!(fn(&self, account: i64, user: i64)),
-    login: qt_method!(fn(&self, account_name: QString, password: QString)),
-    updateChatModel: qt_method!(fn(&self, account: i64, chat: i64)),
-    sendMessage: qt_method!(fn(&self, account: i64, chat: i64, message: QString)),
+    newAccount: qt_method!(fn(&mut self, name: QString, password: QString)),
+    close: qt_method!(fn(&mut self)),
+    addPendingFriend: qt_method!(fn(&mut self, account: i64, user: i64)),
+    blockUser: qt_method!(fn(&mut self, account: i64, user: i64)),
+    login: qt_method!(fn(&mut self, account_name: QString, password: QString)),
+    updateChatModel: qt_method!(fn(&mut self, account: i64, chat: i64)),
+    sendMessage: qt_method!(fn(&mut self, account: i64, chat: i64, message: QString)),
     error: qt_signal!(error: QString),
     audioOutputs: qt_property!(QVariantList; READ get_audio_outputs NOTIFY audioOutputsChanged),
     audioOutputsChanged: qt_signal!(),
-    startAudioTest: qt_method!(fn(&self)),
-    stopAudioTest: qt_method!(fn(&self)),
-    setAudioOutput: qt_method!(fn(&self, output_idx: i64)),
+    startAudioTest: qt_method!(fn(&mut self)),
+    stopAudioTest: qt_method!(fn(&mut self)),
+    setAudioOutput: qt_method!(fn(&mut self, output_idx: i64)),
     visible: qt_property!(bool; WRITE set_visible),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
     chat_model: QObjectBox<ChatModel>,
-    accounts_storage: RwLock<HashMap<AccountId, Box<RefCell<Account>>>>,
-    offline_accounts: RwLock<Vec<String>>,
-    audio_output_storage: RwLock<Vec<AudioDevice>>,
-    visible_atomic: AtomicBool,
+    accounts_storage: HashMap<AccountId, QObjectBox<Account>>,
+    offline_accounts: Vec<String>,
+    audio_output_storage: Vec<AudioDevice>,
+    visible_storage: bool,
 }
 
 impl QTocks {
@@ -213,16 +202,16 @@ impl QTocks {
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
             audio_output_storage: Default::default(),
-            visible_atomic: AtomicBool::new(false),
+            visible_storage: false,
         }
     }
 
-    fn close(&self) {
+    fn close(&mut self) {
         self.send_ui_request(TocksUiEvent::Close);
     }
 
     #[allow(non_snake_case)]
-    fn addPendingFriend(&self, account: i64, friend: i64) {
+    fn addPendingFriend(&mut self, account: i64, friend: i64) {
         self.send_ui_request(TocksUiEvent::AcceptPendingFriend(
             AccountId::from(account),
             UserHandle::from(friend),
@@ -230,14 +219,15 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn blockUser(&self, account: i64, user: i64) {
+    fn blockUser(&mut self, account: i64, user: i64) {
         self.send_ui_request(TocksUiEvent::BlockUser(
             AccountId::from(account),
             UserHandle::from(user),
         ));
     }
 
-    fn login(&self, account_name: QString, password: QString) {
+    fn login(&mut self, account_name: QString, password: QString) {
+
         self.send_ui_request(TocksUiEvent::Login(
             account_name.to_string(),
             password.to_string(),
@@ -245,14 +235,14 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn newAccount(&self, name: QString, password: QString) {
+    fn newAccount(&mut self, name: QString, password: QString) {
         let name = name.to_string();
         let password = password.to_string();
         self.send_ui_request(TocksUiEvent::CreateAccount(name, password));
     }
 
     #[allow(non_snake_case)]
-    fn updateChatModel(&self, account: i64, chat_handle: i64) {
+    fn updateChatModel(&mut self, account: i64, chat_handle: i64) {
         self.send_ui_request(TocksUiEvent::LoadMessages(
             AccountId::from(account),
             ChatHandle::from(chat_handle),
@@ -260,7 +250,7 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn sendMessage(&self, account: i64, chat: i64, message: QString) {
+    fn sendMessage(&mut self, account: i64, chat: i64, message: QString) {
         let message = message.to_string();
 
         self.send_ui_request(TocksUiEvent::MessageSent(
@@ -270,63 +260,61 @@ impl QTocks {
         ));
     }
 
-    fn get_offline_accounts(&self) -> QVariantList {
+    fn get_offline_accounts(&mut self) -> QVariantList {
+        QPointer::from(&*self).as_pinned().borrow_mut();
         let mut accounts = QVariantList::default();
         accounts.push(QString::from("Create a new account...").to_qvariant());
-        for account in &*self.offline_accounts.read().unwrap() {
+        for account in &*self.offline_accounts {
             accounts.push(QString::from(account.as_ref()).to_qvariant())
         }
 
         accounts
     }
 
-    fn set_account_list(&self, account_list: Vec<String>) {
-        *self.offline_accounts.write().unwrap() = account_list;
+    fn set_account_list(&mut self, account_list: Vec<String>) {
+        self.offline_accounts = account_list;
         self.offlineAccountsChanged();
     }
 
-    fn account_login(&self, account_id: AccountId, user: UserHandle, address: ToxId, name: String) {
-        let account = Box::new(RefCell::new(Account::new(account_id, user, address, name)));
+    fn account_login(
+        &mut self,
+        account_id: AccountId,
+        user: UserHandle,
+        address: ToxId,
+        name: String,
+    ) {
+        let account = QObjectBox::new(Account::new(account_id, user, address, name));
         unsafe {
-            QObject::cpp_construct(&account);
+            account.pinned().get_or_create_cpp_object();
         }
-        self.accounts_storage
-            .write()
-            .unwrap()
-            .insert(account_id, account);
+        self.accounts_storage.insert(account_id, account);
         self.accountsChanged();
     }
 
-    fn get_accounts(&self) -> QVariantList {
+    fn get_accounts(&mut self) -> QVariantList {
         self.accounts_storage
-            .read()
-            .unwrap()
             .values()
-            .map(|item| unsafe { (&*item.borrow() as &dyn QObject).as_qvariant() })
+            .map(|item| unsafe { (&*item.pinned().borrow() as &dyn QObject).as_qvariant() })
             .collect()
     }
 
-    fn send_ui_request(&self, request: TocksUiEvent) {
+    fn send_ui_request(&mut self, request: TocksUiEvent) {
         if let Err(e) = self.ui_requests_tx.unbounded_send(request) {
             error!("tocks app not responding to UI requests: {}", e);
         }
     }
 
-    fn get_audio_outputs(&self) -> QVariantList {
+    fn get_audio_outputs(&mut self) -> QVariantList {
         self.audio_output_storage
-            .read()
-            .unwrap()
             .iter()
             .map(|device| QString::from(device.to_string()).to_qvariant())
             .collect()
     }
 
     #[allow(non_snake_case)]
-    fn setAudioOutput(&self, idx: i64) {
+    fn setAudioOutput(&mut self, idx: i64) {
         let device = self
             .audio_output_storage
-            .read()
-            .unwrap()
             .get(idx as usize)
             .cloned()
             .expect("Invalid audio device id passed from qml");
@@ -335,7 +323,7 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn startAudioTest(&self) {
+    fn startAudioTest(&mut self) {
         let mut notification_data = Vec::new();
         // FIXME: better error handling
         File::open(resource_path("qml/res/incoming_message.mp3"))
@@ -349,21 +337,21 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn stopAudioTest(&self) {
+    fn stopAudioTest(&mut self) {
         self.send_ui_request(TocksUiEvent::StopRepeatingSound)
     }
 
-    fn add_audio_output(&self, device: AudioDevice) {
-        self.audio_output_storage.write().unwrap().push(device);
+    fn add_audio_output(&mut self, device: AudioDevice) {
+        self.audio_output_storage.push(device);
 
         self.audioOutputsChanged();
     }
 
-    fn set_visible(&self, visible: bool) {
-        self.visible_atomic.store(visible, Ordering::Relaxed);
+    fn set_visible(&mut self, visible: bool) {
+        self.visible_storage = visible
     }
 
-    fn handle_ui_callback(&self, event: TocksEvent) {
+    fn handle_ui_callback(&mut self, event: TocksEvent) {
         match event {
             TocksEvent::AccountListLoaded(list) => self.set_account_list(list),
             TocksEvent::Error(e) => self.error(e.into()),
@@ -372,29 +360,26 @@ impl QTocks {
             }
             TocksEvent::FriendAdded(account, friend) => {
                 self.accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .add_friend(&friend);
             }
             TocksEvent::BlockedUserAdded(account, user) => {
                 self.accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .add_blocked_user(&user);
             }
             TocksEvent::FriendRemoved(account, user_id) => {
                 self.accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .remove_friend(user_id);
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
@@ -404,19 +389,15 @@ impl QTocks {
                     .set_content(account, chat, messages);
             }
             TocksEvent::MessageInserted(account, chat, entry) => {
-                let chat_model_pinned = self.chat_model.pinned();
-                let mut chat_model_ref = chat_model_pinned.borrow_mut();
-
                 let self_id = self
                     .accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .self_id();
 
-                if *entry.sender() != self_id && !self.visible_atomic.load(Ordering::Relaxed) {
+                if *entry.sender() != self_id && !self.visible_storage {
                     let mut notification_data = Vec::new();
                     // FIXME: better error handling
                     File::open(resource_path("qml/res/incoming_message.mp3"))
@@ -428,6 +409,9 @@ impl QTocks {
                         notification_data,
                     )))
                 }
+
+                let chat_model_pinned = self.chat_model.pinned();
+                let mut chat_model_ref = chat_model_pinned.borrow_mut();
 
                 if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
                     chat_model_ref.push_message(entry);
@@ -442,20 +426,18 @@ impl QTocks {
             }
             TocksEvent::FriendStatusChanged(account_id, user_id, status) => {
                 self.accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account_id)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .set_friend_status(user_id, status);
             }
             TocksEvent::UserNameChanged(account_id, user_id, name) => {
                 self.accounts_storage
-                    .read()
-                    .unwrap()
                     .get(&account_id)
                     .unwrap()
-                    .borrow()
+                    .pinned()
+                    .borrow_mut()
                     .set_user_name(user_id, &name);
             }
             TocksEvent::AudioDeviceAdded(device) => {

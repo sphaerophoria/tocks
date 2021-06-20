@@ -4,7 +4,7 @@ use qmetaobject::*;
 use tocks::{AccountId, Status, UserHandle};
 use toxcore::ToxId;
 
-use std::{cell::RefCell, collections::HashMap, sync::Mutex};
+use std::{cell::RefCell, collections::HashMap};
 
 #[derive(QObject, Default)]
 #[allow(non_snake_case)]
@@ -22,8 +22,8 @@ pub struct Account {
     blockedUsers: qt_property!(QVariantList; READ get_blocked_users NOTIFY blockedUsersChanged),
     blockedUsersChanged: qt_signal!(),
 
-    friends_storage: Mutex<HashMap<UserHandle, Box<RefCell<Friend>>>>,
-    blocked_users_storage: Mutex<HashMap<UserHandle, User>>,
+    friends_storage: HashMap<UserHandle, Box<RefCell<Friend>>>,
+    blocked_users_storage: HashMap<UserHandle, User>,
 }
 
 impl Account {
@@ -47,64 +47,55 @@ impl Account {
         }
     }
 
-    pub fn add_friend(&self, friend: &tocks::Friend) {
+    pub fn add_friend(&mut self, friend: &tocks::Friend) {
         let id = *friend.id();
         let friend = Box::new(RefCell::new(Friend::from(friend)));
         unsafe { QObject::cpp_construct(&friend) };
-        self.friends_storage.lock().unwrap().insert(id, friend);
+        self.friends_storage.insert(id, friend);
         self.friendsChanged()
     }
 
-    pub fn remove_friend(&self, user_id: UserHandle) {
+    pub fn remove_friend(&mut self, user_id: UserHandle) {
         // Keep a reference to the removed friend so it does not go out of scope
         // until QML stops using it
-        let _friend = self.friends_storage.lock().unwrap().remove(&user_id);
+        let _friend = self.friends_storage.remove(&user_id);
         self.friendsChanged()
     }
 
-    pub fn get_friends(&self) -> QVariantList {
+    pub fn get_friends(&mut self) -> QVariantList {
         self.friends_storage
-            .lock()
-            .unwrap()
             .values()
             .map(|item| unsafe { (&*item.borrow_mut() as &dyn QObject).as_qvariant() })
             .collect()
     }
 
-    pub fn set_friend_status(&self, user_id: UserHandle, status: Status) {
-        self.friends_storage.lock().unwrap()[&user_id]
+    pub fn set_friend_status(&mut self, user_id: UserHandle, status: Status) {
+        self.friends_storage[&user_id]
             .borrow_mut()
             .set_status(status);
     }
 
-    pub fn set_user_name(&self, user_id: UserHandle, name: &str) {
-        self.friends_storage.lock().unwrap()[&user_id]
-            .borrow_mut()
-            .set_name(name);
+    pub fn set_user_name(&mut self, user_id: UserHandle, name: &str) {
+        self.friends_storage[&user_id].borrow_mut().set_name(name);
     }
 
-    pub fn add_blocked_user(&self, user: &tocks::User) {
+    pub fn add_blocked_user(&mut self, user: &tocks::User) {
         // Assume we are not duplicating our blocked users
         let qt_user = User {
             id: user.id().id(),
             publicKey: user.public_key().to_string().into(),
             name: user.name().into(),
         };
-        self.blocked_users_storage
-            .lock()
-            .unwrap()
-            .insert(*user.id(), qt_user);
+        self.blocked_users_storage.insert(*user.id(), qt_user);
         self.blockedUsersChanged();
     }
 
-    pub fn self_id(&self) -> UserHandle {
+    pub fn self_id(&mut self) -> UserHandle {
         UserHandle::from(self.userId)
     }
 
-    fn get_blocked_users(&self) -> QVariantList {
+    fn get_blocked_users(&mut self) -> QVariantList {
         self.blocked_users_storage
-            .lock()
-            .unwrap()
             .values()
             .map(|item| item.to_qvariant())
             .collect()
