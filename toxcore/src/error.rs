@@ -81,6 +81,23 @@ impl From<u32> for ToxAddFriendError {
 }
 
 #[derive(Error, Debug)]
+pub enum ToxFriendRemoveError {
+    #[error("Friend not found")]
+    NotFound,
+    #[error("Unknown friend remove error")]
+    Unknown,
+}
+
+impl From<u32> for ToxFriendRemoveError {
+    fn from(err: u32) -> ToxFriendRemoveError {
+        match err {
+            TOX_ERR_FRIEND_DELETE_FRIEND_NOT_FOUND => return ToxFriendRemoveError::NotFound,
+            _ => return ToxFriendRemoveError::Unknown,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum ToxFriendQueryError {
     #[error("Invalid argument")]
     InvalidArgument,

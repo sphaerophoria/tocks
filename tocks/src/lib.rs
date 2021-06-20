@@ -35,12 +35,14 @@ lazy_static! {
 }
 
 // UI things that tocks will need to react to
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum TocksUiEvent {
     Close,
     CreateAccount(String /*name*/, String /*password*/),
     AcceptPendingFriend(AccountId, UserHandle),
+    RequestFriend(AccountId, ToxId, String /*message*/),
     BlockUser(AccountId, UserHandle),
+    PurgeUser(AccountId, UserHandle),
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
@@ -166,6 +168,25 @@ impl Tocks {
                     }
                 }
             }
+            TocksUiEvent::RequestFriend(account_id, tox_id, message) => {
+                let account = self.account_manager.get_mut(&account_id);
+
+                match account {
+                    Some(account) => {
+                        let friend = account
+                            .request_friend(tox_id, message)
+                            .context("Failed to add friend")?;
+
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::FriendAdded(account_id, friend),
+                        );
+                    }
+                    None => {
+                        error!("Account {} not present", account_id);
+                    }
+                }
+            }
             TocksUiEvent::BlockUser(account_id, user_handle) => {
                 let account = self.account_manager.get_mut(&account_id);
 
@@ -183,6 +204,25 @@ impl Tocks {
                         Self::send_tocks_event(
                             &self.tocks_event_tx,
                             TocksEvent::BlockedUserAdded(account_id, blocked_user),
+                        );
+                    }
+                    None => {
+                        error!("Account {} not present", account_id);
+                    }
+                }
+            }
+            TocksUiEvent::PurgeUser(account_id, user_handle) => {
+                let account = self.account_manager.get_mut(&account_id);
+
+                match account {
+                    Some(account) => {
+                        account
+                            .purge_user(&user_handle)
+                            .context("Failed to purge user")?;
+
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::FriendRemoved(account_id, user_handle),
                         );
                     }
                     None => {

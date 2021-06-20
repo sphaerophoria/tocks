@@ -30,6 +30,18 @@ mod api_impl {
         ) -> bool;
         pub fn tox_self_get_friend_list_size(tox: *const toxcore_sys::Tox) -> u64;
         pub fn tox_self_get_friend_list(tox: *const toxcore_sys::Tox, friend_list: *mut u32);
+        pub fn tox_friend_add(
+            tox: *mut toxcore_sys::Tox,
+            address: *const u8,
+            message: *const u8,
+            length: u64,
+            error: *mut toxcore_sys::TOX_ERR_FRIEND_ADD,
+        ) -> u32;
+        pub fn tox_friend_delete(
+            tox: *mut toxcore_sys::Tox,
+            friend_number: u32,
+            error: *mut toxcore_sys::TOX_ERR_FRIEND_DELETE,
+        ) -> bool;
         pub fn tox_friend_add_norequest(
             tox: *mut toxcore_sys::Tox,
             public_key: *const u8,

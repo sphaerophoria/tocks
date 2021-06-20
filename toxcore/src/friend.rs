@@ -8,6 +8,9 @@ use std::{
 /// Information related to a tox friend
 #[derive(Clone, Debug)]
 pub struct Friend {
+    // FIXME: on friend removal outstanding friend handles are invalid. As of
+    // right now we only have one consumer who we know will handle it right, but
+    // we should validate that the friend is still valid when the ID is used
     pub(crate) id: u32,
     pub(crate) data: Arc<RwLock<FriendData>>,
 }

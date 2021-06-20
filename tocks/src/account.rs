@@ -149,22 +149,67 @@ impl Account {
         Ok(friend)
     }
 
-    pub fn block_user(&mut self, user_id: &UserHandle) -> Result<User> {
-        let friend_bundle = &self.user_manager.friend_by_user_handle(&user_id);
-        let tox_friend = &friend_bundle.tox_friend;
+    pub fn request_friend(&mut self, tox_id: ToxId, message: String) -> Result<Friend> {
+        let name = tox_id.to_string();
+        let tox_friend = self
+            .tox
+            .add_friend(tox_id, message)
+            .context("Failed to add friend")?;
 
-        if let Some(_tox_friend) = tox_friend {
-            // In order to block an accepted friend we need to support friend
-            // removal in toxcore
-            unimplemented!();
-        }
-
-        let user = self
+        let friend = self
             .storage
-            .block_user(user_id)
-            .context("Failed to remove user from DB")?;
+            .add_friend(tox_friend.public_key(), name)
+            .context("Failed to add friend to DB")?;
+
+        self.user_manager.add_friend(friend.clone(), tox_friend);
+
+        self.save_manager
+            .save(&self.tox.get_savedata())
+            .context("Failed to save tox data after adding friend")?;
+
+        Ok(friend)
+    }
+
+    pub fn block_user(&mut self, user_id: &UserHandle) -> Result<User> {
+        let (friend, user) = {
+            let friend_bundle = self.user_manager.friend_by_user_handle(&user_id);
+            let tox_friend = &friend_bundle.tox_friend;
+
+            if let Some(tox_friend) = tox_friend {
+                // In order to block an accepted friend we need to support friend
+                // removal in toxcore
+                self.tox
+                    .remove_friend(tox_friend)
+                    .context("Failed to remove tox friend")?;
+
+                self.save_manager
+                    .save(&self.tox.get_savedata())
+                    .context("Failed to save tox profile after friend removal")?;
+            }
+
+            friend_bundle.tox_friend = None;
+
+            let user = self
+                .storage
+                .block_user(user_id)
+                .context("Failed to remove user from DB")?;
+
+            (friend_bundle.friend.clone(), user)
+        };
+
+        self.user_manager.remove_friend(friend);
 
         Ok(user)
+    }
+
+    pub fn purge_user(&mut self, user_id: &UserHandle) -> Result<()> {
+        // Re-use block user code since we want basically the same behavior
+        self.block_user(user_id)
+            .context("Failed to block user before purging")?;
+
+        self.storage.purge_user(user_id)?;
+
+        Ok(())
     }
 
     pub fn send_message(

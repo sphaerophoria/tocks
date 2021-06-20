@@ -160,6 +160,27 @@ impl UserManager {
         &self.friends.last().unwrap().friend
     }
 
+    pub fn remove_friend(&mut self, friend: Friend) {
+        self.chat_mapping.clear();
+        self.user_mapping.clear();
+        self.pk_mapping.clear();
+
+        let bundle_index = self
+            .friends
+            .iter()
+            .position(|bundle| bundle.friend.id() == friend.id());
+        if let Some(index) = bundle_index {
+            self.friends.remove(index);
+        }
+
+        for (idx, bundle) in self.friends.iter().enumerate() {
+            self.chat_mapping.insert(*bundle.friend.chat_handle(), idx);
+            self.user_mapping.insert(*bundle.friend.id(), idx);
+            self.pk_mapping
+                .insert(bundle.friend.public_key().clone(), idx);
+        }
+    }
+
     pub fn friend_by_chat_handle(&self, handle: &ChatHandle) -> &FriendBundle {
         &self.friends[self.chat_mapping[handle]]
     }

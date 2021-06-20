@@ -195,6 +195,29 @@ impl Tox {
         }
     }
 
+    pub fn add_friend(
+        &mut self,
+        address: ToxId,
+        message: String,
+    ) -> Result<Friend, ToxAddFriendError> {
+        unsafe {
+            let mut err = TOX_ERR_FRIEND_ADD_OK;
+            let friend_num = sys::tox_friend_add(
+                self.sys_tox.get_mut(),
+                address.key.as_ptr(),
+                message.as_ptr(),
+                message.len() as u64,
+                &mut err,
+            );
+
+            if err != TOX_ERR_FRIEND_ADD_OK {
+                return Err(ToxAddFriendError::from(err));
+            }
+
+            self.friend_from_id(friend_num)
+        }
+    }
+
     /// Adds a friend without issuing a friend request. This can be called in
     /// response to a friend request, or if two users agree to add eachother via
     /// a different channel
@@ -223,6 +246,21 @@ impl Tox {
 
             self.friend_from_id(friend_num)
         }
+    }
+
+    pub fn remove_friend(&mut self, friend: &Friend) -> Result<(), ToxFriendRemoveError> {
+        unsafe {
+            let mut err = TOX_ERR_FRIEND_DELETE_OK;
+            sys::tox_friend_delete(self.sys_tox.get_mut(), friend.id, &mut err);
+
+            if err != TOX_ERR_FRIEND_DELETE_OK {
+                return Err(ToxFriendRemoveError::from(err));
+            }
+
+            self.data.friend_data.remove(&friend.id);
+        }
+
+        Ok(())
     }
 
     pub fn send_message(
@@ -706,7 +744,7 @@ pub(crate) mod tests {
     impl ToxFixture {
         pub(crate) fn new() -> ToxFixture {
             let default_peer_pk = PublicKey {
-                key: "testkey".to_string().into_bytes(),
+                key: "testkey1".to_string().into_bytes(),
             };
 
             let default_peer_id = 10u32;
@@ -1213,7 +1251,8 @@ pub(crate) mod tests {
             // Test toxcore failure triggers a failure for us
             let friend_add_norequest_ctx = sys::tox_friend_add_norequest_context();
             friend_add_norequest_ctx
-    .expect()   .returning_st(move |_, _, err| {
+                .expect()
+                .returning_st(move |_, _, err| {
                     unsafe {
                         *err = TOX_ERR_FRIEND_ADD_NO_MESSAGE;
                     }
@@ -1230,7 +1269,105 @@ pub(crate) mod tests {
 
             Ok(())
         }
+
+        #[test]
+        fn test_add_friend() -> Result<(), Box<dyn std::error::Error>> {
+            let mut fixture = ToxFixture::new();
+
+            let friend_add_ctx = sys::tox_friend_add_context();
+            friend_add_ctx
+                .expect()
+                .times(1)
+                .return_const_st(3u32);
+
+            friend_add_ctx
+                .expect()
+                .times(1)
+                .return_const_st(4u32);
+
+            let friend_get_public_key_ctx = sys::tox_friend_get_public_key_context();
+            friend_get_public_key_ctx
+                .expect()
+                .times(1)
+                .returning_st(|_, _id, ptr, _err| {
+                    unsafe { std::ptr::copy_nonoverlapping(b"testkey2".as_ptr(), ptr, 8) };
+                    true
+                });
+
+            friend_get_public_key_ctx
+                .expect()
+                .times(1)
+                .returning_st(|_, _id, ptr, _err| {
+                    unsafe { std::ptr::copy_nonoverlapping(b"testkey3".as_ptr(), ptr, 8) };
+                    true
+                });
+
+            let friend_name_size_ctx = sys::tox_friend_get_name_size_context();
+            friend_name_size_ctx
+                .expect()
+                .times(2)
+                .return_const_st(5u32);
+
+            let friend_name_size_ctx = sys::tox_friend_get_name_context();
+            friend_name_size_ctx
+                .expect()
+                .times(1)
+                .returning_st(|_, _id, name, _err| {
+                    unsafe { std::ptr::copy_nonoverlapping(b"test2".as_ptr(), name, 8) };
+                    true
+                });
+
+            friend_name_size_ctx
+                .expect()
+                .times(1)
+                .returning_st(|_, _id, name, _err| {
+                    unsafe { std::ptr::copy_nonoverlapping(b"test3".as_ptr(), name, 8) };
+                    true
+                });
+
+            let get_connection_status_ctx = sys::tox_friend_get_connection_status_context();
+            get_connection_status_ctx
+                .expect()
+                .times(2)
+                .return_const_st(TOX_CONNECTION_NONE);
+
+
+            let _friend = fixture.tox.add_friend(ToxId::from_bytes(vec![0; 38]).unwrap(), "Message".into())?;
+            let _friend2 = fixture.tox.add_friend(ToxId::from_bytes(vec![1; 38]).unwrap(), "Message".into())?;
+
+            Ok(())
         }
+
+        #[test]
+        fn test_remove_friend() -> Result<(), Box<dyn std::error::Error>> {
+            let mut fixture = ToxFixture::new();
+
+            let default_peer_id = fixture.default_peer_id;
+
+            let add_friend_norequest_ctx = sys::tox_friend_add_norequest_context();
+            add_friend_norequest_ctx
+                .expect()
+                .returning_st(move |_, _pk, _err| {
+                    default_peer_id
+                });
+
+            let remove_friend_ctx = sys::tox_friend_delete_context();
+            remove_friend_ctx
+                .expect()
+                .times(1)
+                .withf_st(move |_, id, _err| {
+                    *id == default_peer_id
+                })
+                .return_const_st(true);
+
+            let friend = fixture.tox.add_friend_norequest(&fixture.default_peer_pk)?;
+            fixture.tox.remove_friend(&friend)?;
+
+            Ok(())
+
+        }
+    }
+
 
     // FIXME: test friend name dispatch
 

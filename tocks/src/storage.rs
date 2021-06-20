@@ -378,6 +378,92 @@ impl Storage {
         self.get_user(user_id)
     }
 
+    pub fn purge_user(&mut self, user_id: &UserHandle) -> Result<()> {
+        let transaction = self
+            .connection
+            .transaction()
+            .context("Failed to prepare transaction")?;
+
+        let (friend_id, chat_id) = transaction
+            .query_row(
+                "SELECT id, chat_id \
+            FROM friends \
+            WHERE user_id = ?1",
+                params![user_id.user_id],
+                |row| {
+                    let id: i64 = row.get(0)?;
+                    let chat_id: i64 = row.get(1)?;
+                    Ok((id, chat_id))
+                },
+            )
+            .context("Failed to retrieve user information")?;
+
+        transaction
+            .execute("DELETE FROM chats WHERE chats.id = ?1", params![chat_id])
+            .context("Failed to delete chat with user")?;
+
+        transaction
+            .execute(
+                "DELETE FROM users WHERE users.id = ?1",
+                params![user_id.user_id],
+            )
+            .context("Failed to delete from users table")?;
+
+        transaction
+            .execute(
+                "DELETE FROM friends WHERE friends.id = ?1",
+                params![friend_id],
+            )
+            .context("Failed to delete friend")?;
+
+        transaction
+            .execute(
+                "DELETE FROM text_messages WHERE id IN ( \
+                SELECT text_messages.id FROM text_messages \
+                JOIN messages ON (messages.id = text_messages.message_id \
+                    AND messages.chat_id = ?1))",
+                params![chat_id],
+            )
+            .context("Failed to purge text messages")?;
+
+        transaction
+            .execute(
+                "DELETE FROM pending_messages WHERE id IN ( \
+                SELECT pending_messages.id FROM pending_messages \
+                JOIN messages ON (messages.id = pending_messages.message_id \
+                    AND messages.chat_id = ?1))",
+                params![chat_id],
+            )
+            .context("Failed to purge pending messages")?;
+
+        transaction
+            .execute(
+                "DELETE FROM messages WHERE messages.chat_id = ?1",
+                params![chat_id],
+            )
+            .context("Failed to remove messages")?;
+
+        transaction
+            .execute(
+                "DELETE FROM pending_friends WHERE user_id = ?1",
+                params![user_id.user_id],
+            )
+            .context("Failed to remove from pending_friends")?;
+
+        transaction
+            .execute(
+                "DELETE FROM blocked_users WHERE user_id = ?1",
+                params![user_id.user_id],
+            )
+            .context("Failed to remove from blocked users")?;
+
+        transaction
+            .commit()
+            .context("Failed to commit transaction")?;
+
+        Ok(())
+    }
+
     pub fn blocked_users(&self) -> Result<Vec<User>> {
         let mut statement = self
             .connection
@@ -1131,6 +1217,67 @@ mod tests {
         assert_eq!(friend.id(), blocked_users[0].id());
         assert_eq!(friend.public_key(), blocked_users[0].public_key());
         assert_eq!(friend.name(), blocked_users[0].name());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_purge_user() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_pending_friend(friend_pk)?;
+
+        let friend_pk_2 = PublicKey::from_bytes(vec![2; PublicKey::SIZE])?;
+        let friend2 = storage.add_pending_friend(friend_pk_2)?;
+
+        let friend_pk_3 = PublicKey::from_bytes(vec![3; PublicKey::SIZE])?;
+        let friend3 = storage.add_pending_friend(friend_pk_3)?;
+
+        storage.block_user(friend3.id())?;
+
+        storage.push_message(
+            friend.chat_handle(),
+            *friend.id(),
+            Message::Normal("Test".into()),
+        )?;
+        storage.push_message(
+            friend.chat_handle(),
+            *friend.id(),
+            Message::Normal("Test".into()),
+        )?;
+        storage.push_message(
+            friend.chat_handle(),
+            *friend.id(),
+            Message::Normal("Test".into()),
+        )?;
+
+        storage.push_message(
+            friend2.chat_handle(),
+            *friend2.id(),
+            Message::Normal("Test".into()),
+        )?;
+        storage.push_message(
+            friend2.chat_handle(),
+            *friend2.id(),
+            Message::Normal("Test".into()),
+        )?;
+        storage.push_message(
+            friend2.chat_handle(),
+            *friend2.id(),
+            Message::Normal("Test".into()),
+        )?;
+
+        storage.purge_user(friend.id())?;
+        storage.purge_user(friend3.id())?;
+
+        let friends = storage.friends()?;
+        assert_eq!(friends.len(), 1);
+        assert_eq!(friends[0].id(), friend2.id());
+        assert_eq!(storage.load_messages(friend2.chat_handle())?.len(), 3);
+        assert_eq!(storage.load_messages(friend.chat_handle())?.len(), 0);
+        assert_eq!(storage.blocked_users()?.len(), 0);
 
         Ok(())
     }
