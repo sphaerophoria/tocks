@@ -13,6 +13,7 @@ use tokio::time;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
+    pin::Pin,
 };
 
 macro_rules! impl_self_key_getter {
@@ -66,10 +67,10 @@ pub type ToxEventCallback = Box<dyn FnMut(Event)>;
 /// ```
 pub struct Tox {
     sys_tox: SysToxMutabilityWrapper,
-    data: ToxData,
     next_tox: time::Instant,
     av: ToxAvMutabilityWrapper,
     next_av: time::Instant,
+    data: Pin<Box<ToxData>>,
 }
 
 impl Tox {
@@ -91,10 +92,10 @@ impl Tox {
             next_tox: time::Instant::now(),
             av: ToxAvMutabilityWrapper::new(av),
             next_av: time::Instant::now(),
-            data: ToxData {
+            data: Pin::new(Box::new(ToxData {
                 event_callback,
                 friend_data: HashMap::new(),
-            },
+            })),
         };
 
         unsafe {
@@ -436,7 +437,7 @@ impl Tox {
 
             sys::tox_iterate(
                 sys_tox,
-                (&mut self.data as *mut ToxData) as *mut std::os::raw::c_void,
+                (&mut *self.data as *mut ToxData) as *mut std::os::raw::c_void,
             );
 
             let now = time::Instant::now();
@@ -505,10 +506,6 @@ struct ToxData {
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
 }
 
-/// Wrapper struct to be fed to tox_iterate
-struct CallbackData<'a> {
-    data: &'a mut ToxData,
-}
 /// Callback function provided to toxcore for incoming friend requests
 ///
 /// Messages wil be forwarded to [`ToxData::friend_request_tx`]
@@ -519,7 +516,7 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback(
     length: u64,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
     let public_key_length = sys::tox_public_key_size() as usize;
 
@@ -551,7 +548,7 @@ pub(crate) unsafe extern "C" fn tox_friend_request_callback(
         message,
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::FriendRequest(request));
     }
 }
@@ -567,7 +564,7 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback(
     length: u64,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
     let message_content =
         String::from_utf8_lossy(std::slice::from_raw_parts(message, length as usize)).to_string();
@@ -581,7 +578,7 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback(
         }
     };
 
-    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
@@ -594,7 +591,7 @@ pub(crate) unsafe extern "C" fn tox_friend_message_callback(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::MessageReceived(f, message));
     }
 }
@@ -605,9 +602,9 @@ unsafe extern "C" fn tox_friend_read_receipt_callback(
     message_id: u32,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
-    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
@@ -620,7 +617,7 @@ unsafe extern "C" fn tox_friend_read_receipt_callback(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::ReadReceipt(Receipt {
             id: message_id,
             friend: f,
@@ -634,9 +631,9 @@ unsafe extern "C" fn tox_friend_status_callback(
     status: TOX_USER_STATUS,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
-    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
@@ -660,7 +657,7 @@ unsafe extern "C" fn tox_friend_status_callback(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::StatusUpdated(f));
     }
 }
@@ -671,9 +668,9 @@ unsafe extern "C" fn tox_friend_connection_status_callback(
     connection: TOX_CONNECTION,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
-    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
@@ -693,7 +690,7 @@ unsafe extern "C" fn tox_friend_connection_status_callback(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::StatusUpdated(f));
     }
 }
@@ -716,9 +713,9 @@ unsafe extern "C" fn tox_friend_name_callback(
     len: u64,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let tox_data = &mut *(user_data as *mut CallbackData);
+    let tox_data = &mut *(user_data as *mut ToxData);
 
-    let friend_data = match tox_data.data.friend_data.get(&friend_number) {
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
         Some(d) => d,
         None => {
             error!("Friend data is not initialized");
@@ -735,7 +732,7 @@ unsafe extern "C" fn tox_friend_name_callback(
         data: Arc::clone(&friend_data),
     };
 
-    if let Some(callback) = &mut tox_data.data.event_callback {
+    if let Some(callback) = &mut tox_data.event_callback {
         (*callback)(Event::NameUpdated(f));
     }
 }
@@ -989,17 +986,13 @@ pub(crate) mod tests {
                 }
             }));
 
-            let mut callback_data = CallbackData {
-                data: &mut fixture.tox.data,
-            };
-
             unsafe {
                 tox_friend_request_callback(
                     std::ptr::null_mut(),
                     fixture.default_peer_pk.key.as_ptr(),
                     message.as_ptr(),
                     message.len() as u64,
-                    (&mut callback_data as *mut CallbackData)
+                    (&mut *fixture.tox.data as *mut ToxData)
                         as *mut std::os::raw::c_void,
                 );
             }
@@ -1045,16 +1038,12 @@ pub(crate) mod tests {
 
             fixture.tox.add_friend_norequest(&fixture.default_peer_pk)?;
 
-            let mut callback_data = CallbackData {
-                data: &mut fixture.tox.data,
-            };
-
             unsafe {
                 tox_friend_status_callback(
                     std::ptr::null_mut(),
                     fixture.default_peer_id,
                     TOX_USER_STATUS_BUSY,
-                    (&mut callback_data as *mut CallbackData)
+                    (&mut *fixture.tox.data as *mut ToxData)
                         as *mut std::os::raw::c_void,
                 );
             }
