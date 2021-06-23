@@ -80,6 +80,14 @@ impl EventServer {
         }
 
         let event = event.unwrap();
+        if let TocksEvent::AudioDataReceived(_, _, _) = event {
+            self.tocks_event_tx
+                .unbounded_send(event)
+                .context("Failed to propogate event")?;
+
+            // Skip serializing audio data for now
+            return Ok(());
+        }
 
         let mut serialized = serde_json::to_vec(&event).context("Failed to serialize event")?;
         serialized.push(b'\n');
