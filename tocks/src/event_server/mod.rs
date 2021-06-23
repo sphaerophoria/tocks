@@ -107,6 +107,9 @@ impl EventServer {
         let ui_event = ui_event?;
         if let Some(ui_event) = ui_event {
             self.ui_event_tx.unbounded_send(ui_event)?;
+        } else {
+            // Over the top kill of all clients to avoid 100% CPU usage loop
+            self.clients.clear();
         }
         Ok(())
     }
