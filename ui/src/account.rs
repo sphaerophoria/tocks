@@ -1,7 +1,7 @@
 use crate::contacts::{Friend, User};
 
 use qmetaobject::*;
-use tocks::{AccountId, Status, UserHandle};
+use tocks::{AccountId, CallState, ChatHandle, Status, UserHandle};
 use toxcore::ToxId;
 
 use std::{cell::RefCell, collections::HashMap};
@@ -92,6 +92,17 @@ impl Account {
 
     pub fn self_id(&mut self) -> UserHandle {
         UserHandle::from(self.userId)
+    }
+
+    pub fn set_call_state(&mut self, chat_id: ChatHandle, state: &CallState) {
+        let item = self
+            .friends_storage
+            .iter_mut()
+            .find(|(_id, f)| f.borrow().chat_id() == chat_id.id());
+
+        if let Some((_, friend)) = item {
+            friend.borrow_mut().set_call_state(state)
+        }
     }
 
     fn get_blocked_users(&mut self) -> QVariantList {

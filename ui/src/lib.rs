@@ -4,9 +4,9 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    audio::{AudioManager, FormattedAudio, OutputDevice, RepeatingAudioHandle},
-    AccountId, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent, TocksUiEvent,
-    UserHandle,
+    audio::{AudioFrame, AudioManager, FormattedAudio, OutputDevice, RepeatingAudioHandle},
+    AccountId, CallState, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
+    TocksUiEvent, UserHandle,
 };
 
 use toxcore::{Message, ToxId};
@@ -192,6 +192,8 @@ struct QTocks {
     error: qt_signal!(error: QString),
     audioOutputs: qt_property!(QVariantList; READ get_audio_outputs NOTIFY audioOutputsChanged),
     audioOutputsChanged: qt_signal!(),
+    startCall: qt_method!(fn(&mut self, account: i64, chat: i64)),
+    endCall: qt_method!(fn(&mut self, account: i64, chat: i64)),
     startAudioTest: qt_method!(fn(&mut self)),
     stopAudioTest: qt_method!(fn(&mut self)),
     setAudioOutput: qt_method!(fn(&mut self, output_idx: i64)),
@@ -228,6 +230,8 @@ impl QTocks {
             error: Default::default(),
             audioOutputs: Default::default(),
             audioOutputsChanged: Default::default(),
+            startCall: Default::default(),
+            endCall: Default::default(),
             startAudioTest: Default::default(),
             stopAudioTest: Default::default(),
             setAudioOutput: Default::default(),
@@ -362,6 +366,16 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
+    fn startCall(&mut self, account: i64, chat: i64) {
+        self.send_ui_request(TocksUiEvent::JoinCall(account.into(), chat.into()));
+    }
+
+    #[allow(non_snake_case)]
+    fn endCall(&mut self, account: i64, chat: i64) {
+        self.send_ui_request(TocksUiEvent::LeaveCall(account.into(), chat.into()));
+    }
+
+    #[allow(non_snake_case)]
     fn startAudioTest(&mut self) {
         self.send_qtocks_request(QTocksEvent::StartAudioTest);
     }
@@ -455,8 +469,18 @@ impl QTocks {
                     .borrow_mut()
                     .set_user_name(user_id, &name);
             }
-            TocksEvent::ChatCallStateChanged(..) | TocksEvent::AudioDataReceived(..) => {
-                // FIXME: unimplemented
+            TocksEvent::ChatCallStateChanged(account_id, chat_handle, state) => {
+                // Do nothing
+                self.accounts_storage
+                    .get(&account_id)
+                    .unwrap()
+                    .pinned()
+                    .borrow_mut()
+                    .set_call_state(chat_handle, &state);
+            }
+            TocksEvent::AudioDataReceived(_, _, _) => {
+                // This should be handled by the above layer
+                unreachable!();
             }
         }
     }
@@ -465,8 +489,11 @@ impl QTocks {
 pub struct QmlUi {
     ui_handle: Option<JoinHandle<()>>,
     audio_manager: AudioManager,
+    audio_handles: HashMap<(AccountId, ChatHandle), mpsc::UnboundedSender<AudioFrame>>,
     repeating_audio_handle: Option<RepeatingAudioHandle>,
+    capture_channel: Option<mpsc::UnboundedReceiver<AudioFrame>>,
     tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
+    ui_event_tx: mpsc::UnboundedSender<TocksUiEvent>,
     qtocks_event_rx: mpsc::UnboundedReceiver<QTocksEvent>,
     handle_ui_callback: Box<dyn Fn(TocksEvent) + Send + Sync>,
 }
@@ -487,12 +514,17 @@ impl QmlUi {
             .output_devices()
             .context("Failed to initialize audio devices")?;
 
+        let ui_event_tx_clone = ui_event_tx.clone();
         // Spawn the QML engine into it's own thread. Our implementation will
         // live on the main thread and be owned directly by the main Tocks
         // instance. Our UI event loop needs to be run independently by Qt so we
         // spawn a new thread and will pass messages back and forth as needed
         let ui_handle = std::thread::spawn(move || {
-            let qtocks = QObjectBox::new(QTocks::new(ui_event_tx, qtocks_event_tx, audio_devices));
+            let qtocks = QObjectBox::new(QTocks::new(
+                ui_event_tx_clone,
+                qtocks_event_tx,
+                audio_devices,
+            ));
             let qtocks_pinned = qtocks.pinned();
 
             let mut engine = QmlEngine::new();
@@ -524,8 +556,11 @@ impl QmlUi {
         Ok(QmlUi {
             ui_handle: Some(ui_handle),
             audio_manager,
+            audio_handles: Default::default(),
             repeating_audio_handle: None,
+            capture_channel: None,
             tocks_event_rx,
+            ui_event_tx,
             qtocks_event_rx,
             handle_ui_callback,
         })
@@ -537,18 +572,39 @@ impl QmlUi {
                 _ = self.audio_manager.run().fuse() => {
 
                 }
+                frame = Self::wait_for_capture_frame(&mut self.capture_channel).fuse() => {
+                    // Someone else will catch this failure
+                    match frame {
+                        Some(frame) => {
+                            let _ = self.ui_event_tx.unbounded_send(TocksUiEvent::IncomingAudioFrame(frame));
+                        },
+                        None => {
+                            self.capture_channel = None;
+                        }
+                    }
+                }
                 event = self.tocks_event_rx.next() => {
                     if event.is_none() {
                         warn!("No more tocks events, stopping event loop");
                         return;
                     }
                     let event = event.unwrap();
-                    (*self.handle_ui_callback)(event);
+                    self.handle_tocks_event(event);
                 }
                 event = self.qtocks_event_rx.next() => {
                     self.handle_qtocks_event(event)
                 }
             }
+        }
+    }
+
+    async fn wait_for_capture_frame(
+        channel: &mut Option<mpsc::UnboundedReceiver<AudioFrame>>,
+    ) -> Option<AudioFrame> {
+        if let Some(channel) = channel.as_mut() {
+            channel.next().await
+        } else {
+            futures::future::pending().await
         }
     }
 
@@ -561,6 +617,48 @@ impl QmlUi {
             None => {
                 warn!("No QTocks event received");
             }
+        }
+    }
+
+    fn handle_tocks_event(&mut self, event: TocksEvent) {
+        match event {
+            TocksEvent::AudioDataReceived(account, chat, data) => {
+                self.handle_audio_data(account, chat, data);
+            }
+            TocksEvent::ChatCallStateChanged(account, chat, state) => {
+                match state {
+                    CallState::Active => {
+                        // FIXME: error handling
+                        if self.audio_handles.get(&(account, chat)).is_none() {
+                            let playback_channel =
+                                self.audio_manager.create_playback_channel(50).unwrap();
+                            self.audio_handles.insert((account, chat), playback_channel);
+                        }
+
+                        if self.capture_channel.is_none() {
+                            self.capture_channel =
+                                Some(self.audio_manager.create_capture_channel().unwrap());
+                        }
+                    }
+                    CallState::Idle | CallState::Incoming | CallState::Outgoing => {
+                        self.audio_handles.remove(&(account, chat));
+                        if self.audio_handles.is_empty() {
+                            self.capture_channel = None;
+                        }
+                    }
+                }
+                (*self.handle_ui_callback)(TocksEvent::ChatCallStateChanged(account, chat, state))
+            }
+            event => (*self.handle_ui_callback)(event),
+        };
+    }
+
+    fn handle_audio_data(&mut self, account: AccountId, chat: ChatHandle, data: AudioFrame) {
+        let handle = self.audio_handles.get(&(account, chat));
+
+        // If handle isn't available we may have left the call
+        if let Some(handle) = handle {
+            handle.unbounded_send(data).unwrap();
         }
     }
 
@@ -609,5 +707,14 @@ pub(crate) fn status_to_qstring(status: &Status) -> QString {
         Status::Busy => "busy".into(),
         Status::Offline => "offline".into(),
         Status::Pending => "pending".into(),
+    }
+}
+
+pub(crate) fn call_state_to_qtring(state: &CallState) -> QString {
+    match state {
+        CallState::Active => "active".into(),
+        CallState::Incoming => "incoming".into(),
+        CallState::Idle => "idle".into(),
+        CallState::Outgoing => "outgoing".into(),
     }
 }
