@@ -285,16 +285,16 @@ impl Drop for OalSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AudioDevice {
+pub enum OutputDevice {
     Default,
     Named(String),
 }
 
-impl ToString for AudioDevice {
+impl ToString for OutputDevice {
     fn to_string(&self) -> String {
         match self {
-            AudioDevice::Default => "Default".to_string(),
-            AudioDevice::Named(s) => s.clone(),
+            OutputDevice::Default => "Default".to_string(),
+            OutputDevice::Named(s) => s.clone(),
         }
     }
 }
@@ -389,9 +389,9 @@ impl AudioManager {
         }
     }
 
-    pub fn output_devices(&mut self) -> Result<Vec<AudioDevice>> {
+    pub fn output_devices(&mut self) -> Result<Vec<OutputDevice>> {
         unsafe {
-            let mut ret = vec![AudioDevice::Default];
+            let mut ret = vec![OutputDevice::Default];
 
             let mut devices =
                 oal_func::alcGetString(std::ptr::null_mut(), oal::ALC_ALL_DEVICES_SPECIFIER as i32);
@@ -401,24 +401,24 @@ impl AudioManager {
                     .to_str()
                     .context("Audio device was not a valid Utf8 string")?;
                 devices = devices.add(device_cstr.to_bytes_with_nul().len());
-                ret.push(AudioDevice::Named(device_str.to_string()));
+                ret.push(OutputDevice::Named(device_str.to_string()));
             }
 
             Ok(ret)
         }
     }
 
-    pub fn set_output_device(&mut self, device: AudioDevice) -> Result<()> {
+    pub fn set_output_device(&mut self, device: OutputDevice) -> Result<()> {
         unsafe {
             match device {
-                AudioDevice::Default => {
+                OutputDevice::Default => {
                     oal_func::alcReopenDeviceSOFT(
                         self.output_device_handle.as_ptr(),
                         std::ptr::null(),
                         std::ptr::null(),
                     );
                 }
-                AudioDevice::Named(name) => {
+                OutputDevice::Named(name) => {
                     let name_cstr = CString::new(name).context("Device name invalid")?;
                     oal_func::alcReopenDeviceSOFT(
                         self.output_device_handle.as_ptr(),

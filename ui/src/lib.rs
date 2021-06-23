@@ -4,7 +4,7 @@ mod contacts;
 use account::Account;
 
 use tocks::{
-    audio::{AudioDevice, AudioManager, FormattedAudio, RepeatingAudioHandle},
+    audio::{AudioManager, FormattedAudio, OutputDevice, RepeatingAudioHandle},
     AccountId, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent, TocksUiEvent,
     UserHandle,
 };
@@ -168,7 +168,7 @@ impl QAbstractItemModel for ChatModel {
 // Events to be sent to our internal QTocks loop. We cannot run our QTocks event
 // loop from within our class due to qmetaobject mutability issues
 enum QTocksEvent {
-    SetAudioOutput(AudioDevice),
+    SetAudioOutput(OutputDevice),
     PlayNotificationSound,
     StartAudioTest,
     StopAudioTest,
@@ -202,7 +202,7 @@ struct QTocks {
     chat_model: QObjectBox<ChatModel>,
     accounts_storage: HashMap<AccountId, QObjectBox<Account>>,
     offline_accounts: Vec<String>,
-    audio_output_storage: Vec<AudioDevice>,
+    audio_output_storage: Vec<OutputDevice>,
     visible_storage: bool,
 }
 
@@ -210,7 +210,7 @@ impl QTocks {
     fn new(
         ui_requests_tx: UnboundedSender<TocksUiEvent>,
         qtocks_event_tx: UnboundedSender<QTocksEvent>,
-        audio_devices: Vec<AudioDevice>,
+        audio_devices: Vec<OutputDevice>,
     ) -> QTocks {
         QTocks {
             base: Default::default(),
@@ -564,7 +564,7 @@ impl QmlUi {
         }
     }
 
-    fn set_audio_output(&mut self, device: AudioDevice) {
+    fn set_audio_output(&mut self, device: OutputDevice) {
         let res = self
             .audio_manager
             .set_output_device(device)
