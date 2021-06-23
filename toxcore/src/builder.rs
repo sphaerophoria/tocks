@@ -242,6 +242,9 @@ mod tests {
     use std::ffi::CStr;
 
     struct ToxApiFixture {
+        _toxav_callback_call_ctx: sys::__toxav_callback_call::Context,
+        _toxav_callback_call_state_ctx: sys::__toxav_callback_call_state::Context,
+        _toxav_callback_audio_receive_frame_ctx: sys::__toxav_callback_audio_receive_frame::Context,
         _callback_friend_request_ctx: sys::__tox_callback_friend_request::Context,
         _callback_friend_message_ctx: sys::__tox_callback_friend_message::Context,
         _callback_friend_read_receipt_ctx: sys::__tox_callback_friend_read_receipt::Context,
@@ -291,7 +294,20 @@ mod tests {
             .expect()
             .returning_st(|_, _| std::ptr::null_mut());
 
+        let toxav_callback_call_ctx = sys::toxav_callback_call_context();
+        toxav_callback_call_ctx.expect().return_const(());
+
+        let toxav_callback_call_state_ctx = sys::toxav_callback_call_state_context();
+        toxav_callback_call_state_ctx.expect().return_const(());
+
+        let toxav_callback_audio_receive_frame_ctx = sys::toxav_callback_audio_receive_frame_context();
+        toxav_callback_audio_receive_frame_ctx.expect().return_const(());
+
+
         ToxApiFixture {
+            _toxav_callback_call_ctx: toxav_callback_call_ctx,
+            _toxav_callback_call_state_ctx: toxav_callback_call_state_ctx,
+            _toxav_callback_audio_receive_frame_ctx: toxav_callback_audio_receive_frame_ctx,
             _callback_friend_request_ctx: callback_friend_request_ctx,
             _callback_friend_message_ctx: callback_friend_message_ctx,
             _callback_friend_read_receipt_ctx: callback_friend_read_receipt_ctx,

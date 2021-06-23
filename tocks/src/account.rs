@@ -405,6 +405,9 @@ impl Account {
                     ))
                     .context("Failed to propagate name change")?;
             }
+            CoreEvent::IncomingCall(..) => {
+                // FIXME: Unimplemented
+            }
         }
 
         Ok(())

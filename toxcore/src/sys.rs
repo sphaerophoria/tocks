@@ -114,6 +114,54 @@ mod api_impl {
         pub fn toxav_kill(av: *mut toxcore_sys::ToxAV);
         pub fn toxav_iteration_interval(av: *mut toxcore_sys::ToxAV) -> u32;
         pub fn toxav_iterate(av: *mut toxcore_sys::ToxAV);
+        pub fn toxav_callback_call(
+            av: *mut toxcore_sys::ToxAV,
+            callback: toxcore_sys::toxav_call_cb,
+            user_data: *mut std::ffi::c_void,
+        );
+        pub fn toxav_callback_audio_receive_frame(
+            av: *mut toxcore_sys::ToxAV,
+            callback: toxcore_sys::toxav_audio_receive_frame_cb,
+            user_data: *mut std::ffi::c_void,
+        );
+        pub fn toxav_callback_call_state(
+            av: *mut toxcore_sys::ToxAV,
+            callback: toxcore_sys::toxav_call_state_cb,
+            user_data: *mut std::ffi::c_void,
+        );
+
+        pub fn toxav_call(
+            av: *mut toxcore_sys::ToxAV,
+            friend: u32,
+            audio_bit_rate: u32,
+            video_bit_rate: u32,
+            err: *mut toxcore_sys::TOXAV_ERR_CALL,
+        ) -> bool;
+
+        pub fn toxav_answer(
+            av: *mut toxcore_sys::ToxAV,
+            friend_number: u32,
+            audio_bit_rate: u32,
+            video_bit_rate: u32,
+            err: *mut toxcore_sys::TOXAV_ERR_ANSWER,
+        ) -> bool;
+
+        pub fn toxav_call_control(
+            av: *mut toxcore_sys::ToxAV,
+            friend_number: u32,
+            control: toxcore_sys::TOXAV_CALL_CONTROL,
+            error: *mut toxcore_sys::TOXAV_ERR_CALL_CONTROL,
+        ) -> bool;
+
+        pub fn toxav_audio_send_frame(
+            av: *mut toxcore_sys::ToxAV,
+            friend_number: u32,
+            pcm: *const i16,
+            sample_count: toxcore_sys::size_t,
+            channels: u8,
+            sampling_rate: u32,
+            error: *mut toxcore_sys::TOXAV_ERR_SEND_FRAME,
+        ) -> bool;
 
         pub fn tox_options_new(
             err: *mut toxcore_sys::TOX_ERR_OPTIONS_NEW,

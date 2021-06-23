@@ -180,3 +180,65 @@ pub struct DecryptionError;
 #[derive(Error, Debug)]
 #[error("Info too long")]
 pub struct SetInfoError;
+
+#[derive(Error, Debug)]
+#[error("Item has expired")]
+pub struct ExpiredError;
+
+#[derive(Error, Debug)]
+pub enum CallControlError {
+    #[error("Synchronization failure")]
+    Sync,
+    #[error("Invalid friend")]
+    InvalidFriend,
+    #[error("Friend not in call")]
+    FriendNotInCall,
+    #[error("Invalid transition")]
+    InvalidTransition,
+    #[error("Unknown")]
+    Unknown,
+}
+
+impl From<u32> for CallControlError {
+    fn from(err: u32) -> CallControlError {
+        match err {
+            TOXAV_ERR_CALL_CONTROL_SYNC => CallControlError::Sync,
+            TOXAV_ERR_CALL_CONTROL_FRIEND_NOT_FOUND => CallControlError::InvalidFriend,
+            TOXAV_ERR_CALL_CONTROL_FRIEND_NOT_IN_CALL => CallControlError::FriendNotInCall,
+            TOXAV_ERR_CALL_CONTROL_INVALID_TRANSITION => CallControlError::InvalidTransition,
+            _ => CallControlError::Unknown,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ToxCallError {
+    #[error("Failed to allocate memory")]
+    Malloc,
+    #[error("Synchronization error")]
+    Sync,
+    #[error("Friend not found")]
+    FriendNotFound,
+    #[error("Friend not connected")]
+    FriendNotConnected,
+    #[error("Friend already in call")]
+    FriendAlreadyInCall,
+    #[error("Invalid bitrate")]
+    InvalidBitrate,
+    #[error("Unknown")]
+    Unknown,
+}
+
+impl From<u32> for ToxCallError {
+    fn from(err: u32) -> ToxCallError {
+        match err {
+            TOXAV_ERR_CALL_MALLOC => ToxCallError::Malloc,
+            TOXAV_ERR_CALL_SYNC => ToxCallError::Sync,
+            TOXAV_ERR_CALL_FRIEND_NOT_FOUND => ToxCallError::FriendNotFound,
+            TOXAV_ERR_CALL_FRIEND_NOT_CONNECTED => ToxCallError::FriendNotConnected,
+            TOXAV_ERR_CALL_FRIEND_ALREADY_IN_CALL => ToxCallError::FriendAlreadyInCall,
+            TOXAV_ERR_CALL_INVALID_BIT_RATE => ToxCallError::InvalidBitrate,
+            _ => ToxCallError::Unknown,
+        }
+    }
+}

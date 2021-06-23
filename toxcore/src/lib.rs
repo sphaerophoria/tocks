@@ -3,6 +3,7 @@
 
 //! Rust bindings for Tox, a peer to peer, end to end encrypted instant messenger.
 
+pub mod av;
 pub mod error;
 
 mod builder;
@@ -153,4 +154,5 @@ pub enum Event {
     ReadReceipt(Receipt),
     StatusUpdated(Friend),
     NameUpdated(Friend),
+    IncomingCall(av::IncomingCall),
 }

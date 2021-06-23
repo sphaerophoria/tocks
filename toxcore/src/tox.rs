@@ -1,14 +1,22 @@
 use crate::{
-    builder::ToxBuilder, error::*, sys, Event, Friend, FriendData, FriendRequest, Message,
-    PublicKey, Receipt, SecretKey, Status, ToxId,
+    av::{ActiveCall, AudioFrame, CallControl, CallData, CallEvent, CallState, IncomingCall},
+    builder::ToxBuilder,
+    error::*,
+    sys, Event, Friend, FriendData, FriendRequest, Message, PublicKey, Receipt, SecretKey, Status,
+    ToxId,
 };
 
 use toxcore_sys::*;
 
-use futures::prelude::*;
 use log::{error, warn};
 use paste::paste;
+
 use tokio::time;
+
+use futures::{
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    prelude::*,
+};
 
 use std::{
     collections::HashMap,
@@ -87,7 +95,7 @@ impl Tox {
         // initializing during a call to retrieve the friends seems a little
         // strange
 
-        let tox = Tox {
+        let mut tox = Tox {
             sys_tox: SysToxMutabilityWrapper::new(sys_tox),
             next_tox: time::Instant::now(),
             av: ToxAvMutabilityWrapper::new(av),
@@ -95,6 +103,7 @@ impl Tox {
             data: Pin::new(Box::new(ToxData {
                 event_callback,
                 friend_data: HashMap::new(),
+                call_data: HashMap::new(),
             })),
         };
 
@@ -108,6 +117,22 @@ impl Tox {
                 Some(tox_friend_connection_status_callback),
             );
             sys::tox_callback_friend_name(sys_tox, Some(tox_friend_name_callback));
+
+            sys::toxav_callback_call(
+                av,
+                Some(toxav_call_callback),
+                (&mut *tox.data as *mut ToxData) as *mut std::ffi::c_void,
+            );
+            sys::toxav_callback_call_state(
+                av,
+                Some(toxav_call_state_callback),
+                (&mut *tox.data as *mut ToxData) as *mut std::ffi::c_void,
+            );
+            sys::toxav_callback_audio_receive_frame(
+                av,
+                Some(toxav_receive_audio),
+                (&mut *tox.data as *mut ToxData) as *mut std::ffi::c_void,
+            );
         }
 
         tox
@@ -126,6 +151,9 @@ impl Tox {
                 },
                 _ = time::sleep_until(self.next_av).fuse() => {
                     self.av_iterate();
+                },
+                (f_num, val) = wait_for_call_control(&mut self.data.call_data).fuse() => {
+                    self.handle_call_control(f_num, val)
                 }
             }
         }
@@ -303,6 +331,38 @@ impl Tox {
         unsafe { sys::tox_max_message_length() as usize }
     }
 
+    pub fn call_friend(&mut self, friend: &Friend) -> Result<ActiveCall, ToxCallError> {
+        unsafe {
+            let mut err = TOXAV_ERR_CALL_OK;
+            sys::toxav_call(self.av.get_mut(), friend.id, 64u32, 0u32, &mut err);
+            if err != TOXAV_ERR_CALL_OK {
+                return Err(err.into());
+            }
+        }
+
+        let (control_tx, control_rx) = mpsc::unbounded();
+        let (event_tx, event_rx) = mpsc::unbounded();
+
+        let call_data = Arc::new(RwLock::new(CallData {
+            call_state: CallState::WaitingForPeerAnswer,
+            _audio_enabled: true,
+            _video_enabled: false,
+        }));
+
+        let data = Arc::clone(&call_data);
+
+        self.data.call_data.insert(
+            friend.id,
+            ToxCallData {
+                control: control_rx,
+                event_channel: event_tx,
+                data,
+            },
+        );
+
+        Ok(ActiveCall::new(control_tx, event_rx, call_data))
+    }
+
     /// Calls into toxcore to get the public key for the provided friend id
     fn public_key_from_id(&self, id: u32) -> Result<PublicKey, ToxFriendQueryError> {
         unsafe {
@@ -461,6 +521,94 @@ impl Tox {
             }
         }
     }
+
+    fn handle_call_control(&mut self, friend_number: u32, event: Option<CallControl>) {
+        if event.is_none() {
+            self.data.call_data.remove(&friend_number);
+            return;
+        }
+
+        let event = event.unwrap();
+
+        match event {
+            CallControl::Reject => {
+                let mut err = TOXAV_ERR_CALL_CONTROL_OK;
+
+                if let Some(data) = self.data.call_data.remove(&friend_number) {
+                    let mut data = data.data.write().unwrap();
+                    if data.call_state == CallState::Finished {
+                        return;
+                    } else {
+                        data.call_state = CallState::Finished;
+                    }
+                } else {
+                    error!("Internal call state invalid, rejecting call just in case...");
+                }
+
+                unsafe {
+                    sys::toxav_call_control(
+                        self.av.get_mut(),
+                        friend_number,
+                        TOXAV_CALL_CONTROL_CANCEL,
+                        &mut err,
+                    );
+                }
+                if err != TOXAV_ERR_CALL_CONTROL_OK {
+                    error!("Failed to reject call: {}", CallControlError::from(err));
+                }
+            }
+            CallControl::Accepted => {
+                let mut err = TOXAV_ERR_ANSWER_OK;
+                unsafe {
+                    sys::toxav_answer(self.av.get_mut(), friend_number, 64u32, 0, &mut err);
+                }
+
+                if err != TOXAV_ERR_ANSWER_OK {
+                    error!("Failed to answer call {}", err);
+                    if let Some(data) = self.data.call_data.remove(&friend_number) {
+                        data.set_call_state(CallState::Finished);
+                    }
+                }
+
+                match self.data.call_data.get(&friend_number) {
+                    Some(data) => {
+                        data.set_call_state(CallState::Active);
+                    }
+                    None => error!("Call data missing"),
+                }
+            }
+            CallControl::SendAudio(frame) => {
+                let active_call_friends =
+                    self.data
+                        .call_data
+                        .iter()
+                        .filter_map(|(friend, call_data)| {
+                            match call_data.data.read().unwrap().call_state {
+                                CallState::Active => Some(friend),
+                                _ => None,
+                            }
+                        });
+
+                for friend in active_call_friends {
+                    unsafe {
+                        let mut err = TOXAV_ERR_SEND_FRAME_OK;
+                        sys::toxav_audio_send_frame(
+                            self.av.get_mut(),
+                            *friend,
+                            frame.data.as_ptr(),
+                            (frame.data.len() / frame.channels as usize) as u64,
+                            frame.channels,
+                            frame.sample_rate,
+                            &mut err,
+                        );
+                        if err != TOXAV_ERR_SEND_FRAME_OK {
+                            error!("oh no: {}", err);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Drop for Tox {
@@ -500,12 +648,50 @@ impl<T> MutabilityWrapper<T> {
 type SysToxMutabilityWrapper = MutabilityWrapper<toxcore_sys::Tox>;
 type ToxAvMutabilityWrapper = MutabilityWrapper<toxcore_sys::ToxAV>;
 
+struct ToxCallData {
+    control: UnboundedReceiver<CallControl>,
+    event_channel: UnboundedSender<CallEvent>,
+    data: Arc<RwLock<CallData>>,
+}
+
+impl ToxCallData {
+    fn set_call_state(&self, state: CallState) {
+        let mut data = self.data.write().unwrap();
+        if data.call_state == state {
+            return;
+        }
+
+        data.call_state = state;
+
+        if let Err(e) = self
+            .event_channel
+            .unbounded_send(CallEvent::CallStateChanged(state))
+        {
+            warn!("Failed to send call state to call handle: {}", e);
+        }
+    }
+}
+
 /// mutability rules
 struct ToxData {
     event_callback: Option<ToxEventCallback>,
     friend_data: HashMap<u32, Arc<RwLock<FriendData>>>,
+    call_data: HashMap<u32, ToxCallData>,
 }
 
+async fn wait_for_call_control(
+    call_data: &mut HashMap<u32, ToxCallData>,
+) -> (u32, Option<CallControl>) {
+    if call_data.is_empty() {
+        futures::future::pending::<()>().await;
+    }
+
+    let call_controls = call_data
+        .iter_mut()
+        .map(|(f, call_data)| call_data.control.next().map(move |v| (*f, v)));
+
+    futures::future::select_all(call_controls).await.0
+}
 /// Callback function provided to toxcore for incoming friend requests
 ///
 /// Messages wil be forwarded to [`ToxData::friend_request_tx`]
@@ -737,6 +923,122 @@ unsafe extern "C" fn tox_friend_name_callback(
     }
 }
 
+unsafe extern "C" fn toxav_call_callback(
+    _av: *mut toxcore_sys::ToxAV,
+    friend_number: u32,
+    audio_enabled: bool,
+    video_enabled: bool,
+    user_data: *mut std::ffi::c_void,
+) {
+    let tox_data = &mut *(user_data as *mut ToxData);
+
+    let friend_data = match tox_data.friend_data.get(&friend_number) {
+        Some(d) => d,
+        None => {
+            error!("Friend data is not initialized");
+            return;
+        }
+    };
+
+    let friend = Friend {
+        id: friend_number,
+        data: Arc::clone(&friend_data),
+    };
+
+    let call_data = Arc::new(RwLock::new(CallData {
+        call_state: CallState::WaitingForSelfAnswer,
+        _audio_enabled: audio_enabled,
+        _video_enabled: video_enabled,
+    }));
+
+    let (control_tx, control_rx) = mpsc::unbounded();
+    let (event_tx, event_rx) = mpsc::unbounded();
+
+    tox_data.call_data.insert(
+        friend_number,
+        ToxCallData {
+            control: control_rx,
+            event_channel: event_tx,
+            data: Arc::clone(&call_data),
+        },
+    );
+
+    let call = IncomingCall::new(control_tx, event_rx, call_data, friend);
+
+    if let Some(callback) = &mut tox_data.event_callback {
+        (*callback)(Event::IncomingCall(call))
+    }
+}
+
+unsafe extern "C" fn toxav_call_state_callback(
+    _av: *mut toxcore_sys::ToxAV,
+    friend_number: u32,
+    state: u32,
+    user_data: *mut std::ffi::c_void,
+) {
+    let tox_data = &mut *(user_data as *mut ToxData);
+
+    let friend_call_data = tox_data.call_data.get_mut(&friend_number);
+
+    if friend_call_data.is_none() {
+        error!(
+            "No call data handler registered for friend {}",
+            friend_number
+        );
+        return;
+    }
+
+    let call_data = friend_call_data.unwrap();
+
+    if state & (TOXAV_FRIEND_CALL_STATE_ERROR | TOXAV_FRIEND_CALL_STATE_FINISHED) == 0 {
+        call_data.set_call_state(CallState::Active);
+        return;
+    }
+
+    call_data.set_call_state(CallState::Finished);
+    tox_data.call_data.remove(&friend_number);
+}
+
+unsafe extern "C" fn toxav_receive_audio(
+    _av: *mut ToxAV,
+    friend_number: u32,
+    pcm: *const i16,
+    sample_count: size_t,
+    channels: u8,
+    sample_rate: u32,
+    user_data: *mut std::ffi::c_void,
+) {
+    let tox_data = &mut *(user_data as *mut ToxData);
+
+    let friend_call_data = tox_data.call_data.get_mut(&friend_number);
+
+    if friend_call_data.is_none() {
+        // FIXME: Log spammmmmm
+        error!(
+            "No call data handler registered for friend {}",
+            friend_number
+        );
+        return;
+    }
+
+    let call_data = friend_call_data.unwrap();
+
+    let data = std::slice::from_raw_parts(pcm, sample_count as usize * channels as usize);
+
+    let frame = AudioFrame {
+        data: Arc::new(data.into()),
+        channels,
+        sample_rate,
+    };
+
+    if let Err(e) = call_data
+        .event_channel
+        .unbounded_send(CallEvent::AudioReceived(frame))
+    {
+        warn!("Failed to send audio to call handle: {}", e);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -748,6 +1050,9 @@ pub(crate) mod tests {
         _kill_ctx: sys::__tox_kill::Context,
         _kill_av_ctx: sys::__toxav_kill::Context,
         _public_key_size_ctx: sys::__tox_public_key_size::Context,
+        _toxav_callback_call_ctx: sys::__toxav_callback_call::Context,
+        _toxav_callback_call_state_ctx: sys::__toxav_callback_call_state::Context,
+        _toxav_callback_audio_receive_frame_ctx: sys::__toxav_callback_audio_receive_frame::Context,
         _callback_friend_request_ctx: sys::__tox_callback_friend_request::Context,
         _callback_friend_message_ctx: sys::__tox_callback_friend_message::Context,
         _callback_friend_read_receipt_ctx: sys::__tox_callback_friend_read_receipt::Context,
@@ -864,6 +1169,15 @@ pub(crate) mod tests {
             let callback_friend_name_ctx = sys::tox_callback_friend_name_context();
             callback_friend_name_ctx.expect().return_const(()).times(1);
 
+            let toxav_callback_call_ctx = sys::toxav_callback_call_context();
+            toxav_callback_call_ctx.expect().return_const(()).times(1);
+
+            let toxav_callback_call_state_ctx = sys::toxav_callback_call_state_context();
+            toxav_callback_call_state_ctx.expect().return_const(()).times(1);
+
+            let toxav_callback_audio_receive_frame_ctx = sys::toxav_callback_audio_receive_frame_context();
+            toxav_callback_audio_receive_frame_ctx.expect().return_const(()).times(1);
+
             let tox = Tox::new(std::ptr::null_mut(), std::ptr::null_mut(), None);
 
             ToxFixture {
@@ -871,6 +1185,9 @@ pub(crate) mod tests {
                 _kill_ctx: kill_ctx,
                 _kill_av_ctx: kill_av_ctx,
                 _public_key_size_ctx: public_key_size_ctx,
+                _toxav_callback_call_ctx: toxav_callback_call_ctx,
+                _toxav_callback_call_state_ctx: toxav_callback_call_state_ctx,
+                _toxav_callback_audio_receive_frame_ctx: toxav_callback_audio_receive_frame_ctx,
                 _callback_friend_request_ctx: callback_friend_request_ctx,
                 _callback_friend_message_ctx: callback_friend_message_ctx,
                 _callback_friend_read_receipt_ctx: callback_friend_read_receipt_ctx,
@@ -1011,6 +1328,7 @@ pub(crate) mod tests {
             let callback_called_clone = Arc::clone(&callback_called);
 
             use std::sync::atomic::Ordering;
+
             // Hack in the friend request callback instead of making a fixture builder
             fixture.tox.data.event_callback = Some(Box::new(move |event| {
                 callback_called_clone.store(true, Ordering::Relaxed);
