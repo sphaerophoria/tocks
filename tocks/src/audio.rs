@@ -1,7 +1,7 @@
 #![allow(clippy::mutex_atomic)]
 #![allow(non_snake_case)]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use log::*;
@@ -13,6 +13,14 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
     prelude::*,
 };
+
+// Constants for good toxcore integration
+const CAPTURE_CHANNELS: u32 = 1;
+const CAPTURE_SAMPLE_RATE: u32 = 48000;
+// NOTE: This is an important number. libopus will only encode in certain intervals!
+const CAPTURE_SAMPLE_READ_INTERVAL: i32 = 960;
+// Give a little room in case we back up a little
+const CAPTURE_BUFFER_SIZE: i32 = CAPTURE_SAMPLE_READ_INTERVAL * 4 * (CAPTURE_CHANNELS as i32);
 
 #[cfg_attr(test, mockall::automock)]
 mod oal_func_impl {
@@ -327,13 +335,15 @@ type Streams = Vec<(UnboundedReceiver<AudioFrame>, OalSource)>;
 
 /// Wrapper around openal for our purposes.
 pub struct AudioManager {
-    device_handle: NonNull<oal::ALCdevice>,
+    output_device_handle: NonNull<oal::ALCdevice>,
     alc_context: NonNull<oal::ALCcontext>,
     streams: Streams,
     // finishing_streams are streams that we no longer are receiving audio data
     // for, but still have queued audio to play on the oal source. We need to
     // poll these at some interval and drop them when the queued data is complete
     finishing_streams: Vec<OalSource>,
+    capture_device_handle: *mut oal::ALCdevice,
+    capture_channels: Vec<UnboundedSender<AudioFrame>>,
 }
 
 pub struct RepeatingAudioHandle {
@@ -367,10 +377,12 @@ impl AudioManager {
             let alc_context = NonNull::new(alc_context).context("OpenAL returned null context")?;
 
             let audio_manager = AudioManager {
-                device_handle,
+                output_device_handle: device_handle,
                 alc_context,
                 streams: Vec::new(),
+                capture_device_handle: std::ptr::null_mut(),
                 finishing_streams: Vec::new(),
+                capture_channels: Vec::new(),
             };
 
             Ok(audio_manager)
@@ -401,7 +413,7 @@ impl AudioManager {
             match device {
                 AudioDevice::Default => {
                     oal_func::alcReopenDeviceSOFT(
-                        self.device_handle.as_ptr(),
+                        self.output_device_handle.as_ptr(),
                         std::ptr::null(),
                         std::ptr::null(),
                     );
@@ -409,7 +421,7 @@ impl AudioManager {
                 AudioDevice::Named(name) => {
                     let name_cstr = CString::new(name).context("Device name invalid")?;
                     oal_func::alcReopenDeviceSOFT(
-                        self.device_handle.as_ptr(),
+                        self.output_device_handle.as_ptr(),
                         name_cstr.as_ptr(),
                         std::ptr::null(),
                     )
@@ -422,7 +434,6 @@ impl AudioManager {
         Ok(())
     }
 
-    #[allow(unused)]
     pub fn create_playback_channel(
         &mut self,
         frame_depth: usize,
@@ -443,6 +454,26 @@ impl AudioManager {
         RepeatingAudioHandle { _handle: handle }
     }
 
+    pub fn create_capture_channel(&mut self) -> Result<UnboundedReceiver<AudioFrame>> {
+        if self.capture_device_handle.is_null() {
+            unsafe {
+                self.capture_device_handle = oal::alcCaptureOpenDevice(
+                    std::ptr::null(),
+                    CAPTURE_SAMPLE_RATE,
+                    oal::AL_FORMAT_MONO16 as i32,
+                    CAPTURE_BUFFER_SIZE,
+                );
+                oal_result().context("Failed to open capture device")?;
+                oal::alcCaptureStart(self.capture_device_handle);
+                oal_result().context("Failed to start capture")?;
+            }
+        }
+
+        let (tx, rx) = mpsc::unbounded();
+        self.capture_channels.push(tx);
+        Ok(rx)
+    }
+
     pub async fn run(&mut self) {
         loop {
             futures::select! {
@@ -451,6 +482,11 @@ impl AudioManager {
                 },
                 _ = Self::service_finishing_streams_timer(&self.finishing_streams).fuse() => {
                     self.cleanup_finished_streams();
+                }
+                _ = Self::service_capture_timer(&self.capture_channels, self.capture_device_handle).fuse() => {
+                    if let Err(e) = self.service_captures() {
+                        error!("Failed to service audio captures: {:?}", e);
+                    }
                 }
             };
         }
@@ -483,6 +519,34 @@ impl AudioManager {
         }
 
         tokio::time::sleep(Duration::from_millis(100)).await
+    }
+
+    async fn service_capture_timer(
+        capture_channels: &[UnboundedSender<AudioFrame>],
+        capture_device_handle: *mut oal::ALCdevice,
+    ) {
+        if capture_channels.is_empty() || capture_device_handle.is_null() {
+            futures::future::pending::<()>().await;
+        }
+
+        unsafe {
+            let mut num_samples = 0;
+            oal::alcGetIntegerv(
+                capture_device_handle,
+                oal::ALC_CAPTURE_SAMPLES as i32,
+                1,
+                &mut num_samples,
+            );
+            // On failure num samples of 0 is reasonable, clear state
+            let _ = oal_result();
+            if num_samples >= CAPTURE_SAMPLE_READ_INTERVAL {
+                return;
+            }
+
+            let time_remaining_s = (CAPTURE_SAMPLE_READ_INTERVAL - num_samples) as f32
+                * (1f32 / CAPTURE_SAMPLE_RATE as f32);
+            tokio::time::sleep(Duration::from_secs_f32(time_remaining_s)).await;
+        }
     }
 
     fn create_playback_channel_priv(
@@ -546,6 +610,91 @@ impl AudioManager {
         // FIXME: close device if all streams are finished
     }
 
+    fn read_capture_audio_frame(&mut self) -> Result<Option<AudioFrame>> {
+        let mut num_samples = 0;
+        let buf = unsafe {
+            oal::alcGetIntegerv(
+                self.capture_device_handle,
+                oal::ALC_CAPTURE_SAMPLES as i32,
+                1,
+                &mut num_samples,
+            );
+            oal_result().context("Failed to retrieve number of available samples")?;
+            if num_samples < CAPTURE_SAMPLE_READ_INTERVAL {
+                return Ok(None);
+            }
+            // Ensure we're a multiple of CAPTURE_SAMPLE_INTERVAL
+            let buf_size = (CAPTURE_SAMPLE_READ_INTERVAL * CAPTURE_CHANNELS as i32) as usize;
+            let mut buf: Vec<i16> = Vec::with_capacity(buf_size);
+            oal::alcCaptureSamples(
+                self.capture_device_handle,
+                buf.as_mut_ptr() as *mut c_void,
+                CAPTURE_SAMPLE_READ_INTERVAL,
+            );
+            oal_result().context("Failed to retrieve captured samples")?;
+            buf.set_len(buf_size);
+            buf
+        };
+
+        Ok(Some(AudioFrame {
+            data: AudioData::Mono16(buf),
+            sample_rate: CAPTURE_SAMPLE_RATE as i32,
+        }))
+    }
+
+    fn send_audio_frame_to_capture_channels(&mut self, frame: AudioFrame) -> Result<()> {
+        if self.capture_channels.len() == 1 {
+            if self.capture_channels[0]
+                .unbounded_send(frame)
+                .is_err()
+            {
+                self.capture_channels.pop();
+            }
+        } else {
+            let mut live_channels = Vec::new();
+            std::mem::swap(&mut live_channels, &mut self.capture_channels);
+            warn!("Multiple capture channels results in extra copies which maybe be inefficient");
+            let (live_channels, _dead_channels) = live_channels
+                .into_iter()
+                .partition(|channel| channel.unbounded_send(frame.clone()).is_ok());
+
+            self.capture_channels = live_channels;
+        };
+
+        Ok(())
+    }
+
+    fn service_captures(&mut self) -> Result<()> {
+        if self.capture_channels.is_empty() {
+            return Ok(());
+        }
+
+        if self.capture_device_handle.is_null() {
+            self.capture_channels = Default::default();
+            bail!("OAL device handle unexpectedly null");
+        }
+
+        let audio_frame = self.read_capture_audio_frame()
+            .context("Failed to read audio frame")?;
+
+        let audio_frame = match audio_frame {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+
+        self.send_audio_frame_to_capture_channels(audio_frame)
+            .context("Failed to dispatch capture frame to observers")?;
+
+        if self.capture_channels.is_empty() {
+            unsafe {
+                oal::alcCaptureCloseDevice(self.capture_device_handle);
+                self.capture_device_handle = std::ptr::null_mut();
+            }
+        }
+
+        Ok(())
+    }
+
     fn decode_mp3_into_channel(data: Vec<u8>, channel: &UnboundedSender<AudioFrame>) {
         let mut mp3_decoder = minimp3::Decoder::new(&data[..]);
 
@@ -573,7 +722,7 @@ impl Drop for AudioManager {
         unsafe {
             oal_func::alcMakeContextCurrent(std::ptr::null_mut());
             oal_func::alcDestroyContext(self.alc_context.as_ptr());
-            oal_func::alcCloseDevice(self.device_handle.as_ptr());
+            oal_func::alcCloseDevice(self.output_device_handle.as_ptr());
         }
 
         *audio_manager_constructed = false;
