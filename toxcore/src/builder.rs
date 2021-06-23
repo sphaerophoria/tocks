@@ -119,6 +119,15 @@ impl ToxBuilder {
         }
     }
 
+    fn map_err_toxav_new(err: TOXAV_ERR_NEW) -> ToxCreationError {
+        match err {
+            TOXAV_ERR_NEW_NULL => return ToxCreationError::Null,
+            TOXAV_ERR_NEW_MALLOC => return ToxCreationError::Malloc,
+            TOXAV_ERR_NEW_MULTIPLE => return ToxCreationError::Multiple,
+            _ => return ToxCreationError::Unknown,
+        }
+    }
+
     /// Create the [`Tox`] instance
     pub fn build(mut self) -> Result<Tox, ToxBuildError> {
         if self.log {
@@ -151,7 +160,17 @@ impl ToxBuilder {
         let mut event_callback = None;
         std::mem::swap(&mut event_callback, &mut self.event_callback);
 
-        let ret = Tox::new(sys_tox, event_callback);
+        let mut err = TOXAV_ERR_NEW_OK;
+        let av = unsafe { sys::toxav_new(sys_tox, &mut err) };
+
+        if err != TOXAV_ERR_NEW_OK {
+            unsafe {
+                sys::tox_kill(sys_tox);
+            }
+            return Err(From::from(Self::map_err_toxav_new(err)));
+        }
+
+        let ret = Tox::new(sys_tox, av, event_callback);
 
         Ok(ret)
     }
@@ -231,7 +250,9 @@ mod tests {
             sys::__tox_callback_friend_connection_status::Context,
         _callback_friend_name_ctx: sys::__tox_callback_friend_name::Context,
         _kill_ctx: sys::__tox_kill::Context,
+        _av_kill_ctx: sys::__toxav_kill::Context,
         _new_ctx: sys::__tox_new::Context,
+        _av_new_ctx: sys::__toxav_new::Context,
     }
 
     fn generate_tox_api_mock() -> ToxApiFixture {
@@ -259,8 +280,16 @@ mod tests {
         let kill_ctx = sys::tox_kill_context();
         kill_ctx.expect().return_const(());
 
+        let av_kill_ctx = sys::toxav_kill_context();
+        av_kill_ctx.expect().return_const(());
+
         let new_ctx = sys::tox_new_context();
         new_ctx.expect().returning_st(|_, _| std::ptr::null_mut());
+
+        let av_new_ctx = sys::toxav_new_context();
+        av_new_ctx
+            .expect()
+            .returning_st(|_, _| std::ptr::null_mut());
 
         ToxApiFixture {
             _callback_friend_request_ctx: callback_friend_request_ctx,
@@ -270,7 +299,9 @@ mod tests {
             _callback_friend_connection_status_ctx: callback_friend_connection_status_ctx,
             _callback_friend_name_ctx: callback_friend_name_ctx,
             _kill_ctx: kill_ctx,
+            _av_kill_ctx: av_kill_ctx,
             _new_ctx: new_ctx,
+            _av_new_ctx: av_new_ctx,
         }
     }
     struct BuilderFixture {
@@ -344,6 +375,32 @@ mod tests {
             });
 
             assert!(ToxBuilder::new().is_err());
+        }
+
+        #[test]
+        fn test_av_creation_error() -> Result<(), Box<dyn std::error::Error>> {
+
+            let fixture = BuilderFixture::new()?;
+            let tox_fixture = generate_tox_api_mock();
+
+            tox_fixture._kill_ctx.checkpoint();
+            tox_fixture._av_new_ctx.checkpoint();
+
+            tox_fixture._av_new_ctx.expect()
+                .once()
+                .returning_st(|_, err| {
+                    unsafe { *err = TOXAV_ERR_NEW_MALLOC };
+                    std::ptr::null_mut()
+                });
+
+            tox_fixture._kill_ctx.expect()
+                .once()
+                .return_const_st(());
+
+            assert!(fixture.builder.build().is_err());
+
+
+            Ok(())
         }
     }
 

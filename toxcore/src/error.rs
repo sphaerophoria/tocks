@@ -26,6 +26,8 @@ pub enum ToxCreationError {
     LoadEncrypted,
     #[error("Invalid data load format")]
     BadLoadFormat,
+    #[error("Multiple instances created")]
+    Multiple,
     #[error("Unknown creation error")]
     Unknown,
 }

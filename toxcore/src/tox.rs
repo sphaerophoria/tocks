@@ -1,16 +1,13 @@
 use crate::{
-    builder::ToxBuilder, error::*, Event, Friend, FriendData, FriendRequest, Message, PublicKey,
-    Receipt, SecretKey, Status, ToxId,
+    builder::ToxBuilder, error::*, sys, Event, Friend, FriendData, FriendRequest, Message,
+    PublicKey, Receipt, SecretKey, Status, ToxId,
 };
-
-use log::{error, warn};
 
 use toxcore_sys::*;
 
-use crate::sys;
-
+use futures::prelude::*;
+use log::{error, warn};
 use paste::paste;
-
 use tokio::time;
 
 use std::{
@@ -70,6 +67,9 @@ pub type ToxEventCallback = Box<dyn FnMut(Event)>;
 pub struct Tox {
     sys_tox: SysToxMutabilityWrapper,
     data: ToxData,
+    next_tox: time::Instant,
+    av: ToxAvMutabilityWrapper,
+    next_av: time::Instant,
 }
 
 impl Tox {
@@ -79,8 +79,24 @@ impl Tox {
 
     pub(crate) fn new(
         sys_tox: *mut toxcore_sys::Tox,
+        av: *mut toxcore_sys::ToxAV,
         event_callback: Option<ToxEventCallback>,
     ) -> Tox {
+        // FIXME: friends should be initialized here and only accessed later,
+        // initializing during a call to retrieve the friends seems a little
+        // strange
+
+        let tox = Tox {
+            sys_tox: SysToxMutabilityWrapper::new(sys_tox),
+            next_tox: time::Instant::now(),
+            av: ToxAvMutabilityWrapper::new(av),
+            next_av: time::Instant::now(),
+            data: ToxData {
+                event_callback,
+                friend_data: HashMap::new(),
+            },
+        };
+
         unsafe {
             sys::tox_callback_friend_request(sys_tox, Some(tox_friend_request_callback));
             sys::tox_callback_friend_message(sys_tox, Some(tox_friend_message_callback));
@@ -93,17 +109,7 @@ impl Tox {
             sys::tox_callback_friend_name(sys_tox, Some(tox_friend_name_callback));
         }
 
-        // FIXME: friends should be initialized here and only accessed later,
-        // initializing during a call to retrieve the friends seems a little
-        // strange
-
-        Tox {
-            sys_tox: SysToxMutabilityWrapper { sys_tox },
-            data: ToxData {
-                event_callback,
-                friend_data: HashMap::new(),
-            },
-        }
+        tox
     }
 
     /// Run the tox instance. This needs to be running for anything related to
@@ -112,29 +118,14 @@ impl Tox {
     /// Note: If this function is just stopped this allows you to effectively "go
     /// offline" while still maintaining all related data
     pub async fn run(&mut self) {
-        unsafe {
-            let mut sleep_interval = None;
-
-            loop {
-                {
-                    let sys_tox = self.sys_tox.get_mut();
-
-                    let mut callback_data = CallbackData {
-                        data: &mut self.data,
-                    };
-
-                    sys::tox_iterate(
-                        sys_tox,
-                        (&mut callback_data as *mut CallbackData) as *mut std::os::raw::c_void,
-                    );
-
-                    if sleep_interval.is_none() {
-                        sleep_interval =
-                            Some(sys::tox_iteration_interval(self.sys_tox.get()) as u64);
-                    }
+        loop {
+            futures::select! {
+                _ = time::sleep_until(self.next_tox).fuse() => {
+                    self.iterate();
+                },
+                _ = time::sleep_until(self.next_av).fuse() => {
+                    self.av_iterate();
                 }
-
-                time::sleep(std::time::Duration::from_millis(sleep_interval.unwrap())).await;
             }
         }
     }
@@ -438,10 +429,42 @@ impl Tox {
             })
         }
     }
+
+    fn iterate(&mut self) {
+        unsafe {
+            let sys_tox = self.sys_tox.get_mut();
+
+            sys::tox_iterate(
+                sys_tox,
+                (&mut self.data as *mut ToxData) as *mut std::os::raw::c_void,
+            );
+
+            let now = time::Instant::now();
+            while self.next_tox < now {
+                self.next_tox +=
+                    time::Duration::from_millis(sys::tox_iteration_interval(sys_tox) as u64);
+            }
+        }
+    }
+
+    fn av_iterate(&mut self) {
+        unsafe {
+            let av = self.av.get_mut();
+
+            sys::toxav_iterate(av);
+
+            let now = time::Instant::now();
+            while self.next_av < now {
+                self.next_av +=
+                    time::Duration::from_millis(sys::toxav_iteration_interval(av) as u64);
+            }
+        }
+    }
 }
 
 impl Drop for Tox {
     fn drop(&mut self) {
+        unsafe { sys::toxav_kill(self.av.get_mut()) }
         unsafe { sys::tox_kill(self.sys_tox.get_mut()) }
     }
 }
@@ -455,22 +478,27 @@ unsafe impl Send for Tox {}
 unsafe impl Sync for Tox {}
 
 /// Wrapper struct to help us manage mutability of the interior tox pointer
-struct SysToxMutabilityWrapper {
-    sys_tox: *mut toxcore_sys::Tox,
+struct MutabilityWrapper<T> {
+    val: *mut T,
 }
 
-impl SysToxMutabilityWrapper {
-    fn get(&self) -> *const toxcore_sys::Tox {
-        self.sys_tox
+impl<T> MutabilityWrapper<T> {
+    fn new(val: *mut T) -> Self {
+        Self { val }
     }
 
-    fn get_mut(&mut self) -> *mut toxcore_sys::Tox {
-        self.sys_tox
+    fn get(&self) -> *const T {
+        self.val
+    }
+
+    fn get_mut(&mut self) -> *mut T {
+        self.val
     }
 }
 
-/// Stored data separate from the toxcore api itself. This needs to be separated
-/// so we can use it as the toxcore userdata pointer without breaking any
+type SysToxMutabilityWrapper = MutabilityWrapper<toxcore_sys::Tox>;
+type ToxAvMutabilityWrapper = MutabilityWrapper<toxcore_sys::ToxAV>;
+
 /// mutability rules
 struct ToxData {
     event_callback: Option<ToxEventCallback>,
@@ -481,7 +509,6 @@ struct ToxData {
 struct CallbackData<'a> {
     data: &'a mut ToxData,
 }
-
 /// Callback function provided to toxcore for incoming friend requests
 ///
 /// Messages wil be forwarded to [`ToxData::friend_request_tx`]
@@ -722,6 +749,7 @@ pub(crate) mod tests {
     pub(crate) struct ToxFixture {
         tox: Tox,
         _kill_ctx: sys::__tox_kill::Context,
+        _kill_av_ctx: sys::__toxav_kill::Context,
         _public_key_size_ctx: sys::__tox_public_key_size::Context,
         _callback_friend_request_ctx: sys::__tox_callback_friend_request::Context,
         _callback_friend_message_ctx: sys::__tox_callback_friend_message::Context,
@@ -764,7 +792,10 @@ pub(crate) mod tests {
                 .once();
 
             let kill_ctx = sys::tox_kill_context();
-            kill_ctx.expect().return_const(());
+            kill_ctx.expect().return_const(()).once();
+
+            let kill_av_ctx = sys::toxav_kill_context();
+            kill_av_ctx.expect().return_const(()).once();
 
             let public_key_size_ctx = sys::tox_public_key_size_context();
             public_key_size_ctx
@@ -836,11 +867,12 @@ pub(crate) mod tests {
             let callback_friend_name_ctx = sys::tox_callback_friend_name_context();
             callback_friend_name_ctx.expect().return_const(()).times(1);
 
-            let tox = Tox::new(std::ptr::null_mut(), None);
+            let tox = Tox::new(std::ptr::null_mut(), std::ptr::null_mut(), None);
 
             ToxFixture {
                 tox,
                 _kill_ctx: kill_ctx,
+                _kill_av_ctx: kill_av_ctx,
                 _public_key_size_ctx: public_key_size_ctx,
                 _callback_friend_request_ctx: callback_friend_request_ctx,
                 _callback_friend_message_ctx: callback_friend_message_ctx,
@@ -866,10 +898,15 @@ pub(crate) mod tests {
             fn test_iteration() {
                 async fn test_iteration_async() -> Result<(), Box<dyn std::error::Error>>  {
                     const ITERATION_INTERVAL: u32 = 20;
+                    const AV_ITERATION_INTERVAL: u32 = ITERATION_INTERVAL * 2;
 
                     let iteration_interval_ctx = sys::tox_iteration_interval_context();
                     iteration_interval_ctx.expect()
                         .return_const(ITERATION_INTERVAL);
+
+                    let av_iteration_interval_ctx = sys::toxav_iteration_interval_context();
+                    av_iteration_interval_ctx.expect()
+                        .return_const(AV_ITERATION_INTERVAL);
 
                     use std::sync::atomic::Ordering;
                     let iterations = Arc::new(AtomicU64::new(0));
@@ -879,6 +916,16 @@ pub(crate) mod tests {
                     iterate_ctx.expect().returning_st(move |_, _| {
                         closure_iterations.store(
                             closure_iterations.load(Ordering::Relaxed) + 1u64,
+                            Ordering::Relaxed,
+                        );
+                    });
+
+                    let av_iterations = Arc::new(AtomicU64::new(0));
+                    let av_closure_iterations = Arc::clone(&av_iterations);
+                    let av_iterate_ctx = sys::toxav_iterate_context();
+                    av_iterate_ctx.expect().returning_st(move |_| {
+                        av_closure_iterations.store(
+                            av_closure_iterations.load(Ordering::Relaxed) + 1u64,
                             Ordering::Relaxed,
                         );
                     });
@@ -904,6 +951,9 @@ pub(crate) mod tests {
                     // take some time
                     assert!(iterations.load(Ordering::Relaxed) > NUM_ITERATIONS * 4 / 5);
 
+                    assert!(av_iterations.load(Ordering::Relaxed) > NUM_ITERATIONS * 2 / 5);
+                    assert!(av_iterations.load(Ordering::Relaxed) < NUM_ITERATIONS * 3 / 5);
+
                     Ok(())
                 }
 
@@ -926,6 +976,7 @@ pub(crate) mod tests {
             let callback_called_clone = Arc::clone(&callback_called);
 
             use std::sync::atomic::Ordering;
+
             // Hack in the friend request callback instead of making a fixture builder
             fixture.tox.data.event_callback = Some(Box::new(move |event| {
                 callback_called_clone.store(true, Ordering::Relaxed);

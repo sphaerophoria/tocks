@@ -107,6 +107,13 @@ mod api_impl {
             tox: *mut toxcore_sys::Tox,
             callback: toxcore_sys::tox_friend_name_cb,
         );
+        pub fn toxav_new(
+            tox: *mut toxcore_sys::Tox,
+            err: *mut toxcore_sys::TOXAV_ERR_NEW,
+        ) -> *mut toxcore_sys::ToxAV;
+        pub fn toxav_kill(av: *mut toxcore_sys::ToxAV);
+        pub fn toxav_iteration_interval(av: *mut toxcore_sys::ToxAV) -> u32;
+        pub fn toxav_iterate(av: *mut toxcore_sys::ToxAV);
 
         pub fn tox_options_new(
             err: *mut toxcore_sys::TOX_ERR_OPTIONS_NEW,
