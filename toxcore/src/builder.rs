@@ -389,7 +389,7 @@ mod tests {
         #[test]
         fn test_proxy_host_success() -> Result<(), Box<dyn std::error::Error>> {
             let set_proxy_host_ctx = sys::tox_options_set_proxy_host_context();
-    set_proxy_host_ctx.expect()
+            set_proxy_host_ctx.expect()
                 .withf_st(|_, v| unsafe { CStr::from_ptr(*v).to_string_lossy() == "test" })
                 .return_const(())
                 .once();
@@ -414,7 +414,7 @@ mod tests {
             let savedata = "test".to_string().into_bytes();
 
             let set_savedata_type_ctx = sys::tox_options_set_savedata_type_context();
-    set_savedata_type_ctx.expect()
+            set_savedata_type_ctx.expect()
                 .withf_st(|_, v| *v == TOX_SAVEDATA_TYPE_TOX_SAVE)
                 .return_const(())
                 .once();
@@ -422,7 +422,7 @@ mod tests {
             let savedata_clone = savedata.clone();
 
             let set_savedata_data_ctx = sys::tox_options_set_savedata_data_context();
-    set_savedata_data_ctx.expect()
+            set_savedata_data_ctx.expect()
                 .withf_st(move |_, data, len| unsafe {
                     std::slice::from_raw_parts(*data, *len as usize) == &savedata_clone
                 })
