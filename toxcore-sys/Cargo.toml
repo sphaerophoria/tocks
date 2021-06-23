@@ -11,6 +11,8 @@ cmake = "0.1.45"
 
 [dependencies]
 libsodium-sys = "0.2.6"
+audiopus_sys = "0.2.2"
+env-libvpx-sys = "5.1.0"
 mockall = { version = "0.9.1", optional = true }
 
 [features]

@@ -23,12 +23,16 @@ fn main() {
     let mut toxcore_header: PathBuf = include_path.clone();
     toxcore_header.push("tox.h");
 
-    let mut toxencryptsave_header: PathBuf = include_path;
+    let mut toxencryptsave_header: PathBuf = include_path.clone();
     toxencryptsave_header.push("toxencryptsave.h");
+
+    let mut toxav_header: PathBuf = include_path;
+    toxav_header.push("toxav.h");
 
     let bindings = bindgen::builder()
         .header(toxcore_header.to_string_lossy())
         .header(toxencryptsave_header.to_string_lossy())
+        .header(toxav_header.to_string_lossy())
         .layout_tests(false)
         .prepend_enum_name(false)
         .generate()
