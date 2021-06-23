@@ -1,4 +1,6 @@
 use crate::{
+    audio::AudioFrame,
+    calls::{CallEvent, CallManager, CallState},
     contact::{Friend, Status, User, UserManager},
     error::ExitError,
     savemanager::SaveManager,
@@ -29,6 +31,8 @@ pub(crate) enum AccountEvent {
     ChatMessageCompleted(ChatHandle, ChatMessageId),
     FriendStatusChanged(UserHandle, Status),
     UserNameChanged(UserHandle, String),
+    CallStateChanged(ChatHandle, CallState),
+    AudioDataReceived(ChatHandle, AudioFrame),
 }
 
 impl From<(AccountId, AccountEvent)> for TocksEvent {
@@ -47,6 +51,12 @@ impl From<(AccountId, AccountEvent)> for TocksEvent {
             AccountEvent::UserNameChanged(user, name) => {
                 TocksEvent::UserNameChanged(v.0, user, name)
             }
+            AccountEvent::CallStateChanged(chat, call_state) => {
+                TocksEvent::ChatCallStateChanged(v.0, chat, call_state)
+            }
+            AccountEvent::AudioDataReceived(chat, frame) => {
+                TocksEvent::AudioDataReceived(v.0, chat, frame)
+            }
         }
     }
 }
@@ -56,6 +66,7 @@ pub(crate) struct Account {
     tox: Tox,
     save_manager: SaveManager,
     user_manager: UserManager,
+    call_manager: CallManager,
     storage: Storage,
     outgoing_messages: HashMap<Receipt, (ChatHandle, ChatMessageId)>,
     user_handle: UserHandle,
@@ -103,6 +114,7 @@ impl Account {
             tox,
             save_manager,
             user_manager,
+            call_manager: CallManager::new(),
             toxcore_callback_rx,
             storage,
             outgoing_messages: HashMap::new(),
@@ -297,6 +309,44 @@ impl Account {
         self.storage.load_messages(chat_handle)
     }
 
+    pub fn join_call(&mut self, chat_handle: &ChatHandle) -> Result<CallState> {
+        let initial_state = self.call_manager.call_state(chat_handle);
+        match initial_state {
+            CallState::Incoming => {
+                self.call_manager
+                    .accept_call(chat_handle)
+                    .context("Failed to accept call")?;
+            }
+            CallState::Active | CallState::Outgoing => (),
+            CallState::Idle => {
+                let core_friend = self
+                    .user_manager
+                    .friend_by_chat_handle(chat_handle)
+                    .tox_friend
+                    .as_ref();
+                let core_friend =
+                    core_friend.ok_or_else(|| anyhow!("Cannot join call with offline friend"))?;
+
+                let outgoing_call = self
+                    .tox
+                    .call_friend(&core_friend)
+                    .context("Failed to initiate call with friend")?;
+
+                self.call_manager.outgoing_call(*chat_handle, outgoing_call);
+            }
+        }
+
+        Ok(self.call_manager.call_state(chat_handle))
+    }
+
+    pub fn leave_call(&mut self, chat_handle: &ChatHandle) {
+        self.call_manager.drop_call(chat_handle);
+    }
+
+    pub fn send_audio_frame(&mut self, frame: AudioFrame) -> Result<()> {
+        self.call_manager.send_audio_frame(frame)
+    }
+
     fn handle_toxcore_event(&mut self, event: CoreEvent) -> Result<()> {
         match event {
             CoreEvent::MessageReceived(tox_friend, message) => {
@@ -405,8 +455,43 @@ impl Account {
                     ))
                     .context("Failed to propagate name change")?;
             }
-            CoreEvent::IncomingCall(..) => {
-                // FIXME: Unimplemented
+            CoreEvent::IncomingCall(call) => {
+                info!("Incoming call from {}", call.friend().name());
+
+                let friend = self
+                    .user_manager
+                    .friend_by_public_key(&call.friend().public_key());
+
+                self.call_manager.incoming_call(*friend.chat_handle(), call);
+
+                self.account_event_tx
+                    .unbounded_send(AccountEvent::CallStateChanged(
+                        *friend.chat_handle(),
+                        CallState::Incoming,
+                    ))
+                    .context("Failed to propagate incoming call")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_call_event(&mut self, event: CallEvent) -> Result<()> {
+        match event {
+            CallEvent::CallEnded(chat) => {
+                self.account_event_tx
+                    .unbounded_send(AccountEvent::CallStateChanged(chat, CallState::Idle))
+                    .context("Failed to propagate ended call")?;
+            }
+            CallEvent::AudioReceived(chat, frame) => {
+                self.account_event_tx
+                    .unbounded_send(AccountEvent::AudioDataReceived(chat, frame))
+                    .context("Failed to propagate audio data")?;
+            }
+            CallEvent::CallAccepted(chat) => {
+                self.account_event_tx
+                    .unbounded_send(AccountEvent::CallStateChanged(chat, CallState::Active))
+                    .context("Failed to propagate ended call")?;
             }
         }
 
@@ -427,6 +512,11 @@ impl Account {
 
                     if let Err(e) = self.handle_toxcore_event(event) {
                         error!("Failed to handle toxcore event: {}", e)
+                    }
+                }
+                event = self.call_manager.run().fuse() => {
+                    if let Err(e) = self.handle_call_event(event) {
+                        error!("Failed to handle call event: {}", e)
                     }
                 }
             }
@@ -502,6 +592,10 @@ impl AccountManager {
             },
         );
         account_id
+    }
+
+    pub fn accounts_mut(&mut self) -> impl ExactSizeIterator<Item = &mut Account> {
+        self.accounts.iter_mut().map(|bundle| &mut bundle.1.account)
     }
 
     pub fn get(&self, account_id: &AccountId) -> Option<&Account> {

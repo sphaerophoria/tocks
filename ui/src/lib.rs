@@ -455,6 +455,9 @@ impl QTocks {
                     .borrow_mut()
                     .set_user_name(user_id, &name);
             }
+            TocksEvent::ChatCallStateChanged(..) | TocksEvent::AudioDataReceived(..) => {
+                // FIXME: unimplemented
+            }
         }
     }
 }

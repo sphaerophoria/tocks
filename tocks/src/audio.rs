@@ -296,8 +296,7 @@ pub enum FormattedAudio {
     Mp3(Vec<u8>),
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum AudioData {
     Mono8(Vec<i8>),
     Mono16(Vec<i16>),
@@ -318,7 +317,7 @@ impl AudioData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AudioFrame {
     pub data: AudioData,
     pub sample_rate: i32,

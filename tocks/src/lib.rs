@@ -6,6 +6,7 @@ pub mod contact;
 pub mod audio;
 
 mod account;
+mod calls;
 mod error;
 mod event_server;
 mod message_parser;
@@ -14,12 +15,14 @@ mod storage;
 
 pub use crate::{
     account::AccountId,
+    calls::CallState,
     contact::{Friend, Status, User},
     event_server::{EventClient, EventServer},
     storage::{ChatHandle, ChatLogEntry, ChatMessageId, UserHandle},
 };
 
 use anyhow::{bail, Context, Result};
+use audio::AudioFrame;
 
 use crate::{
     account::{Account, AccountManager},
@@ -50,6 +53,9 @@ pub enum TocksUiEvent {
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
     LoadMessages(AccountId, ChatHandle),
+    JoinCall(AccountId, ChatHandle),
+    LeaveCall(AccountId, ChatHandle),
+    IncomingAudioFrame(AudioFrame),
 }
 
 // Things external observers (like the UI) may want to observe
@@ -66,6 +72,8 @@ pub enum TocksEvent {
     MessageCompleted(AccountId, ChatHandle, ChatMessageId),
     FriendStatusChanged(AccountId, UserHandle, Status),
     UserNameChanged(AccountId, UserHandle, String),
+    ChatCallStateChanged(AccountId, ChatHandle, CallState),
+    AudioDataReceived(AccountId, ChatHandle, AudioFrame),
 }
 
 pub struct Tocks {
@@ -294,6 +302,45 @@ impl Tocks {
                     &self.tocks_event_tx,
                     TocksEvent::MessagesLoaded(account_id, chat_handle, messages),
                 );
+            }
+            TocksUiEvent::JoinCall(account_id, chat_handle) => {
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
+                    .with_context(|| format!("Failed to find account {}", account_id))?;
+
+                let new_state = account
+                    .join_call(&chat_handle)
+                    .context("Failed to accept call")?;
+
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::ChatCallStateChanged(account_id, chat_handle, new_state),
+                );
+            }
+            TocksUiEvent::LeaveCall(account_id, chat_handle) => {
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
+                    .with_context(|| format!("Failed to find account {}", account_id))?;
+
+                account.leave_call(&chat_handle);
+
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::ChatCallStateChanged(account_id, chat_handle, CallState::Idle),
+                );
+            }
+            TocksUiEvent::IncomingAudioFrame(frame) => {
+                let mut accounts = self.account_manager.accounts_mut();
+
+                if accounts.len() == 1 {
+                    accounts.next().unwrap().send_audio_frame(frame)?;
+                } else {
+                    // NOTE: Potentially inefficient clone here, may need to
+                    // re-evaluate if this becomes a problem
+                    accounts.try_for_each(|account| account.send_audio_frame(frame.clone()))?;
+                }
             }
         };
 
