@@ -43,6 +43,14 @@ enum WriteCommand {
         account: i64,
         chat: i64,
     },
+    JoinCall {
+        account: i64,
+        chat: i64,
+    },
+    LeaveCall {
+        account: i64,
+        chat: i64,
+    },
 }
 
 #[derive(StructOpt)]
@@ -126,6 +134,12 @@ fn parse_command(command: WriteCommand) -> TocksUiEvent {
             chat,
             message,
         } => TocksUiEvent::MessageSent(account.into(), chat.into(), message),
+        WriteCommand::JoinCall { account, chat } => {
+            TocksUiEvent::JoinCall(account.into(), chat.into())
+        }
+        WriteCommand::LeaveCall { account, chat } => {
+            TocksUiEvent::LeaveCall(account.into(), chat.into())
+        }
     }
 }
 
