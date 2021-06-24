@@ -5,7 +5,10 @@ use ui::QmlUi;
 
 #[tokio::main]
 async fn main() {
-    pretty_env_logger::init();
+    let env = env_logger::Env::default()
+        .default_filter_or("INFO");
+
+    env_logger::init_from_env(env);
 
     let tocks_event_channel = mpsc::unbounded();
     let ui_event_channel = mpsc::unbounded();

@@ -10,7 +10,7 @@ edition = "2018"
 futures = "0.3.15"
 structopt = "0.3.21"
 log = "0.4.14"
-pretty_env_logger = "0.4.0"
+env_logger = "0.8.4"
 tocks = { path = "../tocks" }
 toxcore = { path = "../toxcore" }
 tokio = { version = "1.6.1", features = ["rt", "macros"] }
