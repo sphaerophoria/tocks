@@ -50,5 +50,16 @@ Item {
                 }
             }
         }
+
+        Text {
+            Layout.columnSpan: 2
+            font.bold: true
+            text: "Attributions"
+        }
+
+        Text {
+            Layout.columnSpan: 2
+            text: tocks.attribution
+        }
     }
 }

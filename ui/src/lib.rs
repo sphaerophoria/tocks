@@ -31,6 +31,8 @@ use ::log::*;
 
 use qmetaobject::*;
 
+const ATTRIBUTION: &'static str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/qml/res/attribution.txt"));
+
 fn resource_path<P: AsRef<Path>>(relative_path: P) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.join(relative_path.as_ref())
@@ -178,6 +180,7 @@ enum QTocksEvent {
 #[derive(QObject)]
 struct QTocks {
     base: qt_base_class!(trait QObject),
+    attribution: qt_property!(QString; CONST READ get_attribution),
     accounts: qt_property!(QVariantList; READ get_accounts NOTIFY accountsChanged),
     accountsChanged: qt_signal!(),
     offlineAccounts: qt_property!(QVariantList; READ get_offline_accounts NOTIFY offlineAccountsChanged),
@@ -216,6 +219,7 @@ impl QTocks {
     ) -> QTocks {
         QTocks {
             base: Default::default(),
+            attribution: Default::default(),
             accounts: Default::default(),
             accountsChanged: Default::default(),
             offlineAccounts: Default::default(),
@@ -308,6 +312,10 @@ impl QTocks {
         }
 
         accounts
+    }
+
+    fn get_attribution(&mut self) -> QString {
+        ATTRIBUTION.into()
     }
 
     fn set_account_list(&mut self, account_list: Vec<String>) {
