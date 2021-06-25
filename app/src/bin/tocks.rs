@@ -14,17 +14,22 @@ async fn main() {
     let ui_event_channel = mpsc::unbounded();
     let event_server_channel = mpsc::unbounded();
 
-    let mut ui = QmlUi::new(ui_event_channel.0.clone(), event_server_channel.1)
-        .expect("Failed to start QML UI");
+    //let mut ui = QmlUi::new(ui_event_channel.0.clone(), event_server_channel.1)
+    //    .expect("Failed to start QML UI");
 
     let mut event_server = EventServer::new(
         tocks_event_channel.1,
         event_server_channel.0,
-        ui_event_channel.0,
+        ui_event_channel.0.clone(),
     )
     .expect("Failed to start event server");
 
     let mut tocks = Tocks::new(ui_event_channel.1, tocks_event_channel.0);
+
+
+    let event_server_rx = event_server_channel.1;
+    let ui_event_tx = ui_event_channel.0;
+    std::thread::spawn(move || relm_ui::run(ui_event_tx, event_server_rx));
 
     futures::select! {
         _ = tocks.run().fuse() => {},
@@ -33,6 +38,7 @@ async fn main() {
                 error!("Event server died {}", e);
             }
         }
-        _ = ui.run().fuse() => {},
+       // _ = ui.run().fuse() => {},
     }
+
 }

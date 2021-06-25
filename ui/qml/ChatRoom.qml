@@ -8,8 +8,64 @@ import "Colors.js" as Colors
 Rectangle {
     id: root
 
+    required property var windowVisible
     required property var account
     required property var friend
+
+    Timer {
+        // Mark the chat as read after a debouncing period
+        id: markReadTimer
+
+        property var lastFriend
+
+        running: false
+
+        onTriggered: {
+            if (lastFriend == friend) {
+                tocks.markChatRead(account.id, friend.chatId, new Date())
+            }
+            running = false
+        }
+
+    }
+
+    Repeater {
+        id: accountRepeater
+        model: tocks.accounts
+
+        Repeater {
+            id: friendRepeater
+            model: modelData.friends
+
+            Item {
+                Connections {
+                    target: modelData.chatModel
+
+                    function onLastMessageTimeChanged() {
+                        if (modelData.chatId == root.friend.chatId) {
+                            tocks.markChatRead(account.id, friend.chatId, new Date())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    function startReadTimer() {
+        if (friend !== undefined) {
+            markReadTimer.lastFriend = root.friend
+            markReadTimer.restart()
+        }
+    }
+
+    onVisibleChanged: {
+        console.log("Visible changed")
+    }
+
+    onFriendChanged: {
+        startReadTimer()
+    }
 
     color: "white"
 
@@ -30,6 +86,7 @@ Rectangle {
 
         ChatLog {
             account: root.account
+            friend: root.friend
 
             z: -1
 

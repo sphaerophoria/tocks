@@ -11,6 +11,7 @@ ListView {
     bottomMargin: 5
 
     required property var account
+    required property var friend
 
     width: 600
 
@@ -18,7 +19,10 @@ ListView {
     verticalLayoutDirection: ListView.BottomToTop
 
     // Global chatModel defined in rust
-    model: chatModel
+    model: friend === undefined ? undefined : friend.chatModel
+    onModelChanged: {
+        console.log("model: " + root.model)
+    }
     delegate: Rectangle {
         property bool sentByMe: model.senderId == account.userId
 

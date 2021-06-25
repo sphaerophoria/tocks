@@ -8,6 +8,7 @@ import "SidebarConstants.js" as SidebarConstants
 
 RowLayout  {
     id: root
+    required property bool windowVisible
     spacing: 0
 
     Sidebar {
@@ -24,7 +25,6 @@ RowLayout  {
 
         onSelectedFriendChanged: {
             if (selectedAccount !== undefined && selectedFriend !== undefined) {
-                tocks.updateChatModel(selectedAccount.id, selectedFriend.chatId)
                 contentLoader.sourceComponent = chatRoom
             }
         }
@@ -42,7 +42,6 @@ RowLayout  {
         }
     }
 
-
     Loader {
         id: contentLoader
         Layout.fillHeight: true
@@ -55,6 +54,7 @@ RowLayout  {
             anchors.fill: parent
             account: sidebar.selectedAccount
             friend: sidebar.selectedFriend
+            windowVisible: root.windowVisible
         }
     }
 

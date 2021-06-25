@@ -11,6 +11,7 @@ use crate::{
 use toxcore::{Event as CoreEvent, Message, PublicKey, Receipt, Status as ToxStatus, Tox, ToxId};
 
 use anyhow::{anyhow, Context, Error, Result};
+use chrono::{DateTime, Utc};
 use fslock::LockFile;
 use futures::{channel::mpsc, prelude::*};
 use lazy_static::lazy_static;
@@ -302,12 +303,26 @@ impl Account {
         Ok(ret)
     }
 
-    // FIXME: In the future this API should support some bounds on which segment
-    // of the chat history we want to load, but for now, since no one who uses
-    // this will have enough messages for it to matter, we just load them all
-    pub fn load_messages(&mut self, chat_handle: &ChatHandle) -> Result<Vec<ChatLogEntry>> {
-        self.storage.load_messages(chat_handle)
+    pub fn load_unread_messages(&mut self, chat_handle: &ChatHandle) -> Result<Vec<ChatLogEntry>> {
+        self.storage.load_unread_messages(chat_handle)
     }
+
+    pub fn load_messages_before(&mut self, chat_handle: &ChatHandle, message: ChatMessageId, limit: usize) -> Result<Vec<ChatLogEntry>>{
+        self.storage.load_messages_before(chat_handle, message, limit)
+    }
+
+    pub fn load_recent_messages(&mut self, chat_handle: &ChatHandle, limit: usize) -> Result<Vec<ChatLogEntry>>{
+        self.storage.load_recent_messages(chat_handle, limit)
+    }
+
+    pub fn mark_chat_read(&mut self, chat_handle: &ChatHandle, read_time: &DateTime<Utc>) -> Result<()> {
+        self.storage.mark_chat_as_read(chat_handle, read_time)
+    }
+
+    pub fn chat_read_times(&mut self) -> Result<Vec<(ChatHandle, DateTime<Utc>)>> {
+        self.storage.last_read_times()
+    }
+
 
     pub fn join_call(&mut self, chat_handle: &ChatHandle) -> Result<CallState> {
         let initial_state = self.call_manager.call_state(chat_handle);

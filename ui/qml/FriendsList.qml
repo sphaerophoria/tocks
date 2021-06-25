@@ -58,7 +58,18 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.leftMargin: SidebarConstants.contentMargins
                     Layout.alignment: Qt.AlignVCenter
-                    text: modelData.name
+
+                    property bool unread: modelData.chatModel.lastReadTime < modelData.chatModel.lastMessageTime
+
+                    text: {
+                        console.log(unread)
+                        var chatModel = modelData.chatModel
+                        if (unread) {
+                            return modelData.name + " (unread)"
+                        } else {
+                            return modelData.name
+                        }
+                    }
                     color: Colors.sidebarText
                 }
 

@@ -8,9 +8,13 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.41"
+chrono = "0.4.10"
+cpp = "0.5.6"
 futures = "0.3.15"
 log = "0.4.14"
-qmetaobject = "0.2.1"
+notify-rust = "4.5.2"
+qmetaobject = { git = "https://github.com/sphaerophoria/qmetaobject-rs", branch = "fetch-more", features = ["chrono_qdatetime"] }
+qttypes = { git = "https://github.com/sphaerophoria/qmetaobject-rs", branch = "fetch-more" }
 tocks = { path = "../tocks" }
 tokio = "1.6.1"
 toxcore = { path = "../toxcore" }

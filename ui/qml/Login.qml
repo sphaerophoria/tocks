@@ -41,7 +41,7 @@ RowLayout {
             x: 0
             Layout.fillWidth: true
             height: width
-            source: "tox-logo.svg"
+            source: "res/tox-logo.svg"
             sourceSize.width: width
             fillMode: Image.PreserveAspectFit
         }

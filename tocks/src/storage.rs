@@ -4,7 +4,7 @@ use toxcore::{Message, PublicKey};
 
 use anyhow::{anyhow, Context, Error, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, params, types::ValueRef};
 use serde::{Deserialize, Serialize};
 
 use std::{fmt, path::Path};
@@ -520,6 +520,44 @@ impl Storage {
         Ok(())
     }
 
+    pub fn mark_chat_as_read(&mut self, chat_handle: &ChatHandle, read_time: &DateTime<Utc>) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE chats SET read_time = ?1 WHERE id = ?2",
+                params![read_time, chat_handle.id()])
+            .context("Failed to set last read time")?;
+
+        Ok(())
+    }
+
+    pub fn last_read_times(&mut self) -> Result<Vec<(ChatHandle, DateTime<Utc>)>> {
+        let mut statement = self.connection
+            .prepare("SELECT id, read_time from chats")
+            .context("Failedto prepare read_time query")?;
+
+        let iter = statement
+            .query_map(
+                params![],
+                |row| {
+                    let id: i64 = row.get(0)?;
+                    let timestamp: Option<DateTime<Utc>> = row.get(1)?;
+
+                    Ok((ChatHandle::from(id), timestamp))
+                })
+                .context("Failed to get read times")?
+                .map(|item| item.map_err(anyhow::Error::from))
+                .filter_map(|item| {
+                    match item {
+                        Ok((id, Some(timestamp))) => Some(Ok((id, timestamp))),
+                        Ok((_id, None))  => None,
+                        Err(e) => Some(Err(e)),
+                    }
+                });
+
+
+        iter.collect()
+    }
+
     pub fn push_message(
         &mut self,
         chat: &ChatHandle,
@@ -569,51 +607,47 @@ impl Storage {
     }
 
     pub fn load_messages(&mut self, chat: &ChatHandle) -> Result<Vec<ChatLogEntry>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT messages.id, sender_id, timestamp, message, action, pending_messages.id \
-                FROM messages \
-                LEFT JOIN text_messages ON messages.id = text_messages.message_id \
-                LEFT JOIN pending_messages ON messages.id = pending_messages.message_id \
-                WHERE chat_id = ?1",
-            )
-            .context("Failed to prepare statement to retrieve messages from DB")?;
+        self.load_message_range(chat, None, true, usize::MAX)
+    }
 
-        let query_map = statement
-            .query_map(params![chat.id()], |row| {
-                let id = ChatMessageId {
-                    msg_id: row.get(0)?,
-                };
-                let sender = UserHandle {
-                    user_id: row.get(1)?,
-                };
-                let timestamp: DateTime<Utc> = row.get(2)?;
-                let message_str: String = row.get(3)?;
-                let is_action: bool = row.get(4)?;
-                let complete: bool = row.get_ref_unwrap(5) == ValueRef::Null;
+    pub fn load_recent_messages(&mut self, chat: &ChatHandle, limit: usize) -> Result<Vec<ChatLogEntry>> {
+        self.load_message_range(chat, None, false, limit)
+    }
 
-                let message = if is_action {
-                    Message::Action(message_str)
-                } else {
-                    Message::Normal(message_str)
-                };
-
-                Ok(ChatLogEntry {
-                    id,
-                    sender,
-                    message,
-                    timestamp,
-                    complete,
+    pub fn load_unread_messages(&mut self, chat: &ChatHandle) -> Result<Vec<ChatLogEntry>> {
+        let read_time = self.connection
+            .query_row("SELECT read_time FROM chats WHERE id = ?1 AND read_time IS NOT NULL",
+                params![chat.id()],
+                |row| {
+                    let timestamp: DateTime<Utc> = row.get(0)?;
+                    Ok(timestamp)
                 })
-            })
-            .context("Failed to retrieve messages from DB")?;
+                .optional()
+                .context("Failed to load read time")?;
 
-        query_map
-            .into_iter()
-            .map(|item| item.map_err(Error::from))
-            .collect::<Result<Vec<_>>>()
-            .context("Failed to convert messages from DB")
+        match read_time {
+            Some(timestamp) => {
+                let mut statement = self.connection
+                    .prepare("SELECT messages.id, sender_id, timestamp, message, action, pending_messages.id \
+                        FROM messages \
+                        LEFT JOIN text_messages ON messages.id = text_messages.message_id \
+                        LEFT JOIN pending_messages ON messages.id = pending_messages.message_id \
+                        WHERE chat_id = ?1 AND timestamp > ?2")
+                    .context("Failed to prepare statement to load unread messages")?;
+
+                let query_map = statement
+                    .query_map(params![chat.id(), timestamp], row_to_chat_log_entry)
+                    .context("Failed to retrieve messages from DB")?
+                    .map(|item| item.map_err(Error::from));
+
+                query_map.collect()
+            }
+            None => self.load_messages(chat)
+        }
+    }
+
+    pub fn load_messages_before(&mut self, chat: &ChatHandle, id: ChatMessageId, num_messages: usize) -> Result<Vec<ChatLogEntry>> {
+        self.load_message_range(chat, Some(id), false, num_messages)
     }
 
     pub fn add_unresolved_message(&mut self, message_id: &ChatMessageId) -> Result<()> {
@@ -678,6 +712,62 @@ impl Storage {
 
         res
     }
+
+    fn load_message_range(&mut self, chat: &ChatHandle, start: Option<ChatMessageId>, forward: bool, limit: usize) -> Result<Vec<ChatLogEntry>> {
+        let limit = if limit > i64::MAX as usize {
+            i64::MAX
+        } else {
+            limit as i64
+        };
+
+        let direction_str = if forward {
+            "ASC"
+        } else {
+            "DESC"
+        };
+
+        let chat_id_limit_str = if let Some(start) = start {
+            if forward {
+                format!("AND messages.id > {}", start.msg_id)
+            } else {
+                format!("AND messages.id < {}", start.msg_id)
+            }
+        } else {
+            "".into()
+        };
+
+        let mut statement = self
+            .connection
+            .prepare(
+                &format!("SELECT messages.id, sender_id, timestamp, message, action, pending_messages.id \
+                FROM messages \
+                LEFT JOIN text_messages ON messages.id = text_messages.message_id \
+                LEFT JOIN pending_messages ON messages.id = pending_messages.message_id \
+                WHERE chat_id = ?1 {} \
+                ORDER BY messages.id {} \
+                LIMIT ?2", chat_id_limit_str, direction_str)
+            )
+            .context("Failed to prepare statement to retrieve messages from DB")?;
+
+
+        let query_map = statement
+            .query_map(params![chat.id(), limit], row_to_chat_log_entry)
+            .context("Failed to retrieve messages from DB")?
+            .map(|item| item.map_err(Error::from));
+
+
+        let mut res = query_map
+            .collect::<Result<Vec<_>>>()
+            .context("Failed to convert messages from DB")?;
+
+        // FIXME: inefficient
+        if !forward {
+            res = res.into_iter().rev().collect();
+        }
+
+        Ok(res)
+    }
+
 }
 
 fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &str) -> Result<()> {
@@ -692,7 +782,8 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
     transaction
         .execute(
             "CREATE TABLE IF NOT EXISTS chats (\
-            id INTEGER PRIMARY KEY)",
+            id INTEGER PRIMARY KEY,
+            read_time TEXT)",
             [],
         )
         .context("Failed to create chats table")?;
@@ -813,6 +904,33 @@ fn initialize_db(connection: &mut Connection, self_pk: &PublicKey, self_name: &s
         .context("Failed to commit db initialization")?;
 
     Ok(())
+}
+
+fn row_to_chat_log_entry(row: &Row) -> rusqlite::Result<ChatLogEntry> {
+    let id = ChatMessageId {
+        msg_id: row.get(0)?,
+    };
+    let sender = UserHandle {
+        user_id: row.get(1)?,
+    };
+    let timestamp: DateTime<Utc> = row.get(2)?;
+    let message_str: String = row.get(3)?;
+    let is_action: bool = row.get(4)?;
+    let complete: bool = row.get_ref_unwrap(5) == ValueRef::Null;
+
+    let message = if is_action {
+        Message::Action(message_str)
+    } else {
+        Message::Normal(message_str)
+    };
+
+    Ok(ChatLogEntry {
+        id,
+        sender,
+        message,
+        timestamp,
+        complete,
+    })
 }
 
 #[cfg(test)]
@@ -1280,5 +1398,102 @@ mod tests {
         assert_eq!(storage.blocked_users()?.len(), 0);
 
         Ok(())
+    }
+
+    #[test]
+    fn load_messages_forward_ranges() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_pending_friend(friend_pk)?;
+
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("1".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("2".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("3".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("4".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("5".into()))?;
+
+        let messages = storage.load_message_range(friend.chat_handle(), None, true, 3)?;
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].message, Message::Normal("1".into()));
+        assert_eq!(messages[1].message, Message::Normal("2".into()));
+        assert_eq!(messages[2].message, Message::Normal("3".into()));
+
+        let messages = storage.load_message_range(friend.chat_handle(), Some(*messages[1].id()), true, usize::MAX)?;
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].message, Message::Normal("3".into()));
+        assert_eq!(messages[1].message, Message::Normal("4".into()));
+        assert_eq!(messages[2].message, Message::Normal("5".into()));
+
+        Ok(())
+    }
+
+
+    #[test]
+    fn load_messages_backward_ranges() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_pending_friend(friend_pk)?;
+
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("1".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("2".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("3".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("4".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("5".into()))?;
+
+        let messages = storage.load_message_range(friend.chat_handle(), None, false, 3)?;
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].message, Message::Normal("3".into()));
+        assert_eq!(messages[1].message, Message::Normal("4".into()));
+        assert_eq!(messages[2].message, Message::Normal("5".into()));
+
+        let messages = storage.load_message_range(friend.chat_handle(), Some(*messages[1].id()), false, usize::MAX)?;
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].message, Message::Normal("1".into()));
+        assert_eq!(messages[1].message, Message::Normal("2".into()));
+        assert_eq!(messages[2].message, Message::Normal("3".into()));
+
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unread_messages() -> Result<()> {
+        let selfpk = PublicKey::from_bytes(vec![0xff; PublicKey::SIZE])?;
+        let mut storage = Storage::open_ram(&selfpk, "self")?;
+
+        let friend_pk = PublicKey::from_bytes(vec![1; PublicKey::SIZE])?;
+        let friend = storage.add_pending_friend(friend_pk)?;
+
+
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("1".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("2".into()))?;
+        let med = Utc::now();
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("3".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("4".into()))?;
+        storage.push_message(friend.chat_handle(), storage.self_user_handle(), Message::Normal("5".into()))?;
+
+        let end = Utc::now();
+
+        assert_eq!(storage.load_unread_messages(friend.chat_handle())?.len(), 5);
+        storage.mark_chat_as_read(friend.chat_handle(), &med)?;
+
+        let messages = storage.load_unread_messages(friend.chat_handle())?;
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].message, Message::Normal("3".into()));
+        assert_eq!(messages[2].message, Message::Normal("5".into()));
+
+        storage.mark_chat_as_read(friend.chat_handle(), &end)?;
+        assert_eq!(storage.load_unread_messages(friend.chat_handle())?.len(), 0);
+
+        Ok(())
+
     }
 }

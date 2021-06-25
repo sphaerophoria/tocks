@@ -15,4 +15,5 @@ tocks = { path = "../tocks" }
 toxcore = { path = "../toxcore" }
 tokio = { version = "1.6.1", features = ["rt", "macros"] }
 ui = { path = "../ui" }
+relm-ui = { path = "../relm-ui" }
 serde_json = "1.0.64"

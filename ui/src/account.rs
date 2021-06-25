@@ -1,7 +1,10 @@
-use crate::contacts::{Friend, User};
+use crate::{
+    chat_model::ChatModel,
+    contacts::{Friend, User},
+};
 
 use qmetaobject::*;
-use tocks::{AccountId, CallState, ChatHandle, Status, UserHandle};
+use tocks::{AccountId, ChatHandle, UserHandle};
 use toxcore::ToxId;
 
 use std::{cell::RefCell, collections::HashMap};
@@ -22,7 +25,9 @@ pub struct Account {
     blockedUsers: qt_property!(QVariantList; READ get_blocked_users NOTIFY blockedUsersChanged),
     blockedUsersChanged: qt_signal!(),
 
-    friends_storage: HashMap<UserHandle, Box<RefCell<Friend>>>,
+    friend_by_user_handle: HashMap<UserHandle, usize>,
+    friend_by_chat_handle: HashMap<ChatHandle, usize>,
+    friends_storage: Vec<Box<RefCell<Friend>>>,
     blocked_users_storage: HashMap<UserHandle, User>,
 }
 
@@ -42,41 +47,28 @@ impl Account {
             blockedUsers: Default::default(),
             blockedUsersChanged: Default::default(),
 
+            friend_by_user_handle: Default::default(),
+            friend_by_chat_handle: Default::default(),
             friends_storage: Default::default(),
             blocked_users_storage: Default::default(),
         }
     }
 
-    pub fn add_friend(&mut self, friend: &tocks::Friend) {
-        let id = *friend.id();
-        let friend = Box::new(RefCell::new(Friend::from(friend)));
+    pub fn add_friend(&mut self, friend: &tocks::Friend, chat_model: ChatModel) {
+        let friend = Box::new(RefCell::new(Friend::new(friend, chat_model)));
         unsafe { QObject::cpp_construct(&friend) };
-        self.friends_storage.insert(id, friend);
+        self.friends_storage.push(friend);
+        self.reset_friend_keys();
         self.friendsChanged()
     }
 
     pub fn remove_friend(&mut self, user_id: UserHandle) {
         // Keep a reference to the removed friend so it does not go out of scope
         // until QML stops using it
-        let _friend = self.friends_storage.remove(&user_id);
+        let idx = self.friend_by_user_handle.get(&user_id).unwrap();
+        let _friend = self.friends_storage.remove(*idx);
+        self.reset_friend_keys();
         self.friendsChanged()
-    }
-
-    pub fn get_friends(&mut self) -> QVariantList {
-        self.friends_storage
-            .values()
-            .map(|item| unsafe { (&*item.borrow_mut() as &dyn QObject).as_qvariant() })
-            .collect()
-    }
-
-    pub fn set_friend_status(&mut self, user_id: UserHandle, status: Status) {
-        self.friends_storage[&user_id]
-            .borrow_mut()
-            .set_status(status);
-    }
-
-    pub fn set_user_name(&mut self, user_id: UserHandle, name: &str) {
-        self.friends_storage[&user_id].borrow_mut().set_name(name);
     }
 
     pub fn add_blocked_user(&mut self, user: &tocks::User) {
@@ -90,19 +82,29 @@ impl Account {
         self.blockedUsersChanged();
     }
 
-    pub fn self_id(&mut self) -> UserHandle {
-        UserHandle::from(self.userId)
+    pub fn friend_from_user_handle(&mut self, user_handle: &UserHandle) -> Option<&RefCell<Friend>>{
+        let idx = match self.friend_by_user_handle.get(&user_handle) {
+            Some(idx) => *idx,
+            None => return None,
+        };
+
+        Some(&*self.friends_storage[idx])
     }
 
-    pub fn set_call_state(&mut self, chat_id: ChatHandle, state: &CallState) {
-        let item = self
-            .friends_storage
-            .iter_mut()
-            .find(|(_id, f)| f.borrow().chat_id() == chat_id.id());
+    pub fn chat_from_chat_handle(&mut self, chat_handle: &ChatHandle) -> Option<&RefCell<ChatModel>>{
+        let idx = match self.friend_by_chat_handle.get(&chat_handle) {
+            Some(idx) => *idx,
+            None => return None,
+        };
 
-        if let Some((_, friend)) = item {
-            friend.borrow_mut().set_call_state(state)
-        }
+        Some(self.friends_storage[idx].get_mut().chat_model())
+    }
+
+    fn get_friends(&mut self) -> QVariantList {
+        self.friends_storage
+            .iter()
+            .map(|item| unsafe { (&*item.borrow_mut() as &dyn QObject).as_qvariant() })
+            .collect()
     }
 
     fn get_blocked_users(&mut self) -> QVariantList {
@@ -110,5 +112,19 @@ impl Account {
             .values()
             .map(|item| item.to_qvariant())
             .collect()
+    }
+
+    fn reset_friend_keys(&mut self) {
+        let (chat_map, user_map) = self.friends_storage
+            .iter()
+            .enumerate()
+            .map(|(i, friend)| {
+                let friend = friend.borrow_mut();
+                ((friend.chat_id().into(), i), (friend.user_id().into(), i))
+            })
+            .unzip();
+
+        self.friend_by_chat_handle = chat_map;
+        self.friend_by_user_handle = user_map;
     }
 }

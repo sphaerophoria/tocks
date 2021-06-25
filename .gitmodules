@@ -7,3 +7,6 @@
 [submodule "openal-sys/src/openal-soft"]
 	path = openal-sys/src/openal-soft
 	url = https://github.com/kcat/openal-soft
+[submodule "ui/qmetaobject-rs"]
+	path = ui/qmetaobject-rs
+	url = git@github.com:sphaerophoria/qmetaobject-rs.git

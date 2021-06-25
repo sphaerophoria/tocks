@@ -39,10 +39,6 @@ enum WriteCommand {
         chat: i64,
         message: String,
     },
-    LoadMessages {
-        account: i64,
-        chat: i64,
-    },
     JoinCall {
         account: i64,
         chat: i64,
@@ -117,9 +113,6 @@ fn parse_command(command: WriteCommand) -> TocksUiEvent {
             account_name,
             password,
         } => TocksUiEvent::Login(account_name, password),
-        WriteCommand::LoadMessages { account, chat } => {
-            TocksUiEvent::LoadMessages(account.into(), chat.into())
-        }
         WriteCommand::RequestFriend {
             account,
             tox_id,

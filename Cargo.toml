@@ -6,5 +6,6 @@ members = [
 	"toxcore",
 	"tocks",
 	"ui",
+	"relm-ui",
 	"app",
 ]

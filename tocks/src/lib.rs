@@ -31,6 +31,7 @@ use crate::{
 
 use toxcore::ToxId;
 
+use chrono::{DateTime, Utc};
 use futures::{channel::mpsc, prelude::*};
 use lazy_static::lazy_static;
 use log::*;
@@ -52,10 +53,16 @@ pub enum TocksUiEvent {
     PurgeUser(AccountId, UserHandle),
     Login(String /* Tox account name */, String /*password*/),
     MessageSent(AccountId, ChatHandle, String /* message */),
-    LoadMessages(AccountId, ChatHandle),
     JoinCall(AccountId, ChatHandle),
     LeaveCall(AccountId, ChatHandle),
     IncomingAudioFrame(AudioFrame),
+    MarkChatRead(AccountId, ChatHandle, DateTime<Utc>),
+    LoadMessages{
+        account: AccountId,
+        chat: ChatHandle,
+        start_id: Option<ChatMessageId>,
+        num_messages: usize,
+    },
 }
 
 // Things external observers (like the UI) may want to observe
@@ -74,6 +81,7 @@ pub enum TocksEvent {
     UserNameChanged(AccountId, UserHandle, String),
     ChatCallStateChanged(AccountId, ChatHandle, CallState),
     AudioDataReceived(AccountId, ChatHandle, AudioFrame),
+    ChatReadTimeUpdated(AccountId, ChatHandle, DateTime<Utc>),
 }
 
 pub struct Tocks {
@@ -238,7 +246,7 @@ impl Tocks {
                         .with_context(|| format!("Failed to create account {}", account_name))?;
 
                 let account_id = self.account_manager.add_account(account, account_event_rx);
-                let account = self.account_manager.get(&account_id).unwrap();
+                let account = self.account_manager.get_mut(&account_id).unwrap();
 
                 let user_handle = account.user_handle();
                 let address = account.address();
@@ -254,11 +262,21 @@ impl Tocks {
                     ),
                 );
 
-                for friend in account.friends() {
+
+                // Cache friends in vec so account usable in loop
+                let friends: Vec<_> = account.friends().map(|item| item.clone()).collect();
+                for friend in friends {
                     Self::send_tocks_event(
                         &self.tocks_event_tx,
                         TocksEvent::FriendAdded(account_id, friend.clone()),
                     );
+
+                    if let Ok(entries) = account.load_unread_messages(friend.chat_handle()) {
+                        Self::send_tocks_event(
+                            &self.tocks_event_tx,
+                            TocksEvent::MessagesLoaded(account_id, *friend.chat_handle(), entries),
+                        );
+                    }
                 }
 
                 for user in account.blocked_users()? {
@@ -266,6 +284,12 @@ impl Tocks {
                         &self.tocks_event_tx,
                         TocksEvent::BlockedUserAdded(account_id, user),
                     );
+                }
+
+                for (chat_handle, timestamp) in account.chat_read_times()? {
+                    Self::send_tocks_event(
+                        &self.tocks_event_tx,
+                        TocksEvent::ChatReadTimeUpdated(account_id, chat_handle, timestamp));
                 }
             }
             TocksUiEvent::MessageSent(account_id, chat_handle, message) => {
@@ -290,18 +314,6 @@ impl Tocks {
                         TocksEvent::MessageInserted(account_id, chat_handle, entry),
                     );
                 }
-            }
-            TocksUiEvent::LoadMessages(account_id, chat_handle) => {
-                let account = self
-                    .account_manager
-                    .get_mut(&account_id)
-                    .with_context(|| format!("Failed to find account {}", account_id))?;
-
-                let messages = account.load_messages(&chat_handle)?;
-                Self::send_tocks_event(
-                    &self.tocks_event_tx,
-                    TocksEvent::MessagesLoaded(account_id, chat_handle, messages),
-                );
             }
             TocksUiEvent::JoinCall(account_id, chat_handle) => {
                 let account = self
@@ -341,6 +353,35 @@ impl Tocks {
                     // re-evaluate if this becomes a problem
                     accounts.try_for_each(|account| account.send_audio_frame(frame.clone()))?;
                 }
+            }
+            TocksUiEvent::MarkChatRead(account_id, chat, timestamp) => {
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
+                    .with_context(|| format!("Failed to find account {}", account_id))?;
+
+                let read_time = account.mark_chat_read(&chat, &timestamp)
+                    .context("Failed to mark chat as read")?;
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::ChatReadTimeUpdated(account_id, chat, timestamp));
+            }
+            TocksUiEvent::LoadMessages{account, chat, num_messages, start_id } => {
+                let account_id = account;
+                let account = self
+                    .account_manager
+                    .get_mut(&account_id)
+                    .with_context(|| format!("Failed to find account {}", account))?;
+
+                let messages = match start_id {
+                    Some(id) => account.load_messages_before(&chat, id, num_messages),
+                    None => account.load_recent_messages(&chat, num_messages)
+                }
+                .context("Failed to load messages")?;
+
+                Self::send_tocks_event(
+                    &self.tocks_event_tx,
+                    TocksEvent::MessagesLoaded(account_id, chat, messages));
             }
         };
 

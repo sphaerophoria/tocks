@@ -1,15 +1,20 @@
+#![recursion_limit="256"]
+
 mod account;
+mod chat_model;
 mod contacts;
 
 use account::Account;
 
+use chat_model::ChatModel;
+use chrono::{DateTime, Local, Utc, NaiveDateTime, TimeZone};
 use tocks::{
     audio::{AudioFrame, AudioManager, FormattedAudio, OutputDevice, RepeatingAudioHandle},
-    AccountId, CallState, ChatHandle, ChatLogEntry, ChatMessageId, Status, TocksEvent,
+    AccountId, CallState, ChatHandle, Status, TocksEvent,
     TocksUiEvent, UserHandle,
 };
 
-use toxcore::{Message, ToxId};
+use toxcore::{ToxId};
 
 use anyhow::{Context, Result};
 
@@ -18,12 +23,15 @@ use futures::{
     prelude::*,
 };
 
+use notify_rust::{Notification, NotificationHandle};
+
 use std::{
-    borrow::BorrowMut,
+    cell::RefCell,
     collections::HashMap,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
+    pin::Pin,
     thread::JoinHandle,
 };
 
@@ -31,7 +39,16 @@ use ::log::*;
 
 use qmetaobject::*;
 
+cpp::cpp!{{
+    #include <memory>
+    #include <iostream>
+    #include <QtWidgets/QApplication>
+    #include <QtGui/QIcon>
+}}
+
+// FIXME: Add these as qrcs
 const ATTRIBUTION: &'static str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/qml/res/attribution.txt"));
+const ICON_PATH: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/qml/res/tox-logo.svg");
 
 fn resource_path<P: AsRef<Path>>(relative_path: P) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -49,129 +66,11 @@ fn load_notification_sound() -> FormattedAudio {
     FormattedAudio::Mp3(notification_data)
 }
 
-#[derive(QObject, Default)]
-#[allow(non_snake_case)]
-struct ChatModel {
-    base: qt_base_class!(trait QAbstractItemModel),
-    account: qt_property!(i64; NOTIFY accountChanged),
-    accountChanged: qt_signal!(),
-    chat: qt_property!(i64; NOTIFY chatChanged),
-    chatChanged: qt_signal!(),
-
-    chat_log: Vec<ChatLogEntry>,
-}
-
-impl ChatModel {
-    const MESSAGE_ROLE: i32 = USER_ROLE;
-    const SENDER_ID_ROLE: i32 = USER_ROLE + 1;
-    const COMPLETE_ROLE: i32 = USER_ROLE + 2;
-
-    fn set_content(&mut self, account_id: AccountId, chat: ChatHandle, content: Vec<ChatLogEntry>) {
-        self.account = account_id.id();
-        self.accountChanged();
-
-        self.chat = chat.id();
-        self.chatChanged();
-
-        (self as &dyn QAbstractItemModel).begin_reset_model();
-
-        self.chat_log = content;
-
-        (self as &dyn QAbstractItemModel).end_reset_model();
-    }
-
-    fn push_message(&mut self, entry: ChatLogEntry) {
-        (self as &dyn QAbstractItemModel).begin_insert_rows(QModelIndex::default(), 0, 0);
-
-        self.chat_log.push(entry);
-
-        (self as &dyn QAbstractItemModel).end_insert_rows()
-    }
-
-    fn resolve_message(&mut self, id: ChatMessageId) {
-        let idx = match self.chat_log.binary_search_by(|item| item.id().cmp(&id)) {
-            Ok(idx) => idx,
-            Err(_) => {
-                error!("Chatlog item {} not found", id);
-                return;
-            }
-        };
-
-        self.chat_log[idx].set_complete(true);
-
-        let qidx = (self as &dyn QAbstractItemModel).create_index(
-            self.reversed_index(idx as i32) as i32,
-            0,
-            0,
-        );
-        (self as &dyn QAbstractItemModel).data_changed(qidx, qidx);
-    }
-
-    fn reversed_index(&self, idx: i32) -> usize {
-        self.chat_log.len() - idx as usize - 1
-    }
-}
-
-impl QAbstractItemModel for ChatModel {
-    fn index(&self, row: i32, _column: i32, _parent: QModelIndex) -> QModelIndex {
-        (self as &dyn QAbstractItemModel).create_index(row, 0, 0)
-    }
-
-    fn parent(&self, _index: QModelIndex) -> QModelIndex {
-        QModelIndex::default()
-    }
-
-    fn row_count(&self, _parent: QModelIndex) -> i32 {
-        self.chat_log.len() as i32
-    }
-
-    fn column_count(&self, _parent: QModelIndex) -> i32 {
-        1
-    }
-
-    fn data(&self, index: QModelIndex, role: i32) -> QVariant {
-        debug!("Returning line, {}", index.row());
-
-        let entry = self.chat_log.get(self.reversed_index(index.row()));
-
-        if entry.is_none() {
-            return QVariant::default();
-        }
-
-        let entry = entry.unwrap();
-
-        match role {
-            Self::MESSAGE_ROLE => {
-                let message = entry.message();
-
-                if let Message::Normal(message) = message {
-                    QString::from(message.as_ref()).to_qvariant()
-                } else {
-                    QVariant::default()
-                }
-            }
-            Self::SENDER_ID_ROLE => entry.sender().id().to_qvariant(),
-            Self::COMPLETE_ROLE => entry.complete().to_qvariant(),
-            _ => QVariant::default(),
-        }
-    }
-
-    fn role_names(&self) -> HashMap<i32, QByteArray> {
-        let mut ret = HashMap::new();
-
-        ret.insert(Self::MESSAGE_ROLE, "message".into());
-        ret.insert(Self::SENDER_ID_ROLE, "senderId".into());
-        ret.insert(Self::COMPLETE_ROLE, "complete".into());
-
-        ret
-    }
-}
-
 // Events to be sent to our internal QTocks loop. We cannot run our QTocks event
 // loop from within our class due to qmetaobject mutability issues
 enum QTocksEvent {
     SetAudioOutput(OutputDevice),
-    PlayNotificationSound,
+    SendNotification(String, String),
     StartAudioTest,
     StopAudioTest,
 }
@@ -190,7 +89,6 @@ struct QTocks {
     addPendingFriend: qt_method!(fn(&mut self, account: i64, user: i64)),
     blockUser: qt_method!(fn(&mut self, account: i64, user: i64)),
     login: qt_method!(fn(&mut self, account_name: QString, password: QString)),
-    updateChatModel: qt_method!(fn(&mut self, account: i64, chat: i64)),
     sendMessage: qt_method!(fn(&mut self, account: i64, chat: i64, message: QString)),
     error: qt_signal!(error: QString),
     audioOutputs: qt_property!(QVariantList; READ get_audio_outputs NOTIFY audioOutputsChanged),
@@ -200,15 +98,14 @@ struct QTocks {
     startAudioTest: qt_method!(fn(&mut self)),
     stopAudioTest: qt_method!(fn(&mut self)),
     setAudioOutput: qt_method!(fn(&mut self, output_idx: i64)),
-    visible: qt_property!(bool; WRITE set_visible),
+    markChatRead: qt_method!(fn(&mut self, account: i64, chat: i64, timestamp: QDateTime)),
+    sendNotification: qt_method!(fn(&mut self, title: QString, message: QString)),
 
     ui_requests_tx: UnboundedSender<TocksUiEvent>,
     qtocks_event_tx: UnboundedSender<QTocksEvent>,
-    chat_model: QObjectBox<ChatModel>,
-    accounts_storage: HashMap<AccountId, QObjectBox<Account>>,
+    accounts_storage: HashMap<AccountId, Pin<Box<RefCell<Account>>>>,
     offline_accounts: Vec<String>,
     audio_output_storage: Vec<OutputDevice>,
-    visible_storage: bool,
 }
 
 impl QTocks {
@@ -230,7 +127,6 @@ impl QTocks {
             blockUser: Default::default(),
             login: Default::default(),
             sendMessage: Default::default(),
-            updateChatModel: Default::default(),
             error: Default::default(),
             audioOutputs: Default::default(),
             audioOutputsChanged: Default::default(),
@@ -239,14 +135,13 @@ impl QTocks {
             startAudioTest: Default::default(),
             stopAudioTest: Default::default(),
             setAudioOutput: Default::default(),
-            visible: Default::default(),
+            markChatRead: Default::default(),
+            sendNotification: Default::default(),
             ui_requests_tx,
             qtocks_event_tx,
-            chat_model: QObjectBox::new(Default::default()),
             accounts_storage: Default::default(),
             offline_accounts: Default::default(),
             audio_output_storage: audio_devices,
-            visible_storage: false,
         }
     }
 
@@ -285,14 +180,6 @@ impl QTocks {
     }
 
     #[allow(non_snake_case)]
-    fn updateChatModel(&mut self, account: i64, chat_handle: i64) {
-        self.send_ui_request(TocksUiEvent::LoadMessages(
-            AccountId::from(account),
-            ChatHandle::from(chat_handle),
-        ));
-    }
-
-    #[allow(non_snake_case)]
     fn sendMessage(&mut self, account: i64, chat: i64, message: QString) {
         let message = message.to_string();
 
@@ -304,7 +191,6 @@ impl QTocks {
     }
 
     fn get_offline_accounts(&mut self) -> QVariantList {
-        QPointer::from(&*self).as_pinned().borrow_mut();
         let mut accounts = QVariantList::default();
         accounts.push(QString::from("Create a new account...").to_qvariant());
         for account in &*self.offline_accounts {
@@ -330,16 +216,16 @@ impl QTocks {
         address: ToxId,
         name: String,
     ) {
-        let account = QObjectBox::new(Account::new(account_id, user, address, name));
-        account.pinned().get_or_create_cpp_object();
+        let account = Box::pin(RefCell::new(Account::new(account_id, user, address, name)));
+        unsafe { QObject::cpp_construct(&account) };
         self.accounts_storage.insert(account_id, account);
         self.accountsChanged();
     }
 
     fn get_accounts(&mut self) -> QVariantList {
         self.accounts_storage
-            .values()
-            .map(|item| unsafe { (&*item.pinned().borrow() as &dyn QObject).as_qvariant() })
+            .values_mut()
+            .map(|item| unsafe { (&*item.get_mut() as &dyn QObject).as_qvariant() })
             .collect()
     }
 
@@ -393,8 +279,20 @@ impl QTocks {
         self.send_qtocks_request(QTocksEvent::StopAudioTest);
     }
 
-    fn set_visible(&mut self, visible: bool) {
-        self.visible_storage = visible
+    #[allow(non_snake_case)]
+    fn markChatRead(&mut self, account: i64, chat: i64, timestamp: QDateTime) {
+        let (date, time) = timestamp.get_date_time();
+        let date = date.into();
+        let time = time.into();
+        let datetime = NaiveDateTime::new(date, time);
+        let localtime = Local.from_local_datetime(&datetime).unwrap();
+        let utctime = localtime.with_timezone(&Utc);
+        self.send_ui_request(TocksUiEvent::MarkChatRead(account.into(), chat.into(), utctime));
+    }
+
+    #[allow(non_snake_case)]
+    fn sendNotification(&mut self, title: QString, message: QString) {
+        self.send_qtocks_request(QTocksEvent::SendNotification(title.into(), message.into()));
     }
 
     fn handle_ui_callback(&mut self, event: TocksEvent) {
@@ -405,18 +303,31 @@ impl QTocks {
                 self.account_login(account_id, user_handle, address, name)
             }
             TocksEvent::FriendAdded(account, friend) => {
+                let tx_clone = self.ui_requests_tx.clone();
+                let chat_id = *friend.chat_handle();
+                let chat_model = ChatModel::new(move |id| {
+                    let res = tx_clone.unbounded_send(TocksUiEvent::LoadMessages{
+                        account: account,
+                        chat: chat_id,
+                        num_messages: 50usize,
+                        start_id: id
+                    });
+
+                    if let Err(e) = res {
+                        error!("Failed to request more messages from tocks");
+                    }
+                });
+
                 self.accounts_storage
                     .get(&account)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
-                    .add_friend(&friend);
+                    .add_friend(&friend, chat_model);
             }
             TocksEvent::BlockedUserAdded(account, user) => {
                 self.accounts_storage
                     .get(&account)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
                     .add_blocked_user(&user);
             }
@@ -424,71 +335,82 @@ impl QTocks {
                 self.accounts_storage
                     .get(&account)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
                     .remove_friend(user_id);
             }
             TocksEvent::MessagesLoaded(account, chat, messages) => {
-                self.chat_model
-                    .pinned()
-                    .borrow_mut()
-                    .set_content(account, chat, messages);
-            }
-            TocksEvent::MessageInserted(account, chat, entry) => {
-                let self_id = self
-                    .accounts_storage
+                self.accounts_storage
                     .get(&account)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
-                    .self_id();
+                    .chat_from_chat_handle(&chat)
+                    .unwrap()
+                    .borrow_mut()
+                    .push_messages(messages);
+            }
+            TocksEvent::MessageInserted(account, chat, entry) => {
+                self.accounts_storage
+                    .get(&account)
+                    .unwrap()
+                    .borrow_mut()
+                    .chat_from_chat_handle(&chat)
+                    .unwrap()
+                    .borrow_mut()
+                    .push_message(entry);
 
-                if *entry.sender() != self_id && !self.visible_storage {
-                    self.send_qtocks_request(QTocksEvent::PlayNotificationSound);
-                }
-
-                let chat_model_pinned = self.chat_model.pinned();
-                let mut chat_model_ref = chat_model_pinned.borrow_mut();
-
-                if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
-                    chat_model_ref.push_message(entry);
-                }
             }
             TocksEvent::MessageCompleted(account, chat, id) => {
-                let chat_model_pinned = self.chat_model.pinned();
-                let mut chat_model_ref = chat_model_pinned.borrow_mut();
-                if chat_model_ref.account == account.id() && chat_model_ref.chat == chat.id() {
-                    chat_model_ref.resolve_message(id);
-                }
+                self.accounts_storage
+                    .get(&account)
+                    .unwrap()
+                    .borrow_mut()
+                    .chat_from_chat_handle(&chat)
+                    .unwrap()
+                    .borrow_mut()
+                    .resolve_message(id);
             }
             TocksEvent::FriendStatusChanged(account_id, user_id, status) => {
                 self.accounts_storage
                     .get(&account_id)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
-                    .set_friend_status(user_id, status);
+                    .friend_from_user_handle(&user_id)
+                    .unwrap()
+                    .borrow_mut()
+                    .set_status(status);
             }
             TocksEvent::UserNameChanged(account_id, user_id, name) => {
                 self.accounts_storage
                     .get(&account_id)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
-                    .set_user_name(user_id, &name);
+                    .friend_from_user_handle(&user_id)
+                    .unwrap()
+                    .borrow_mut()
+                    .set_name(&name);
             }
             TocksEvent::ChatCallStateChanged(account_id, chat_handle, state) => {
-                // Do nothing
                 self.accounts_storage
                     .get(&account_id)
                     .unwrap()
-                    .pinned()
                     .borrow_mut()
-                    .set_call_state(chat_handle, &state);
+                    .chat_from_chat_handle(&chat_handle)
+                    .unwrap()
+                    .borrow_mut()
+                    .set_call_state(&state);
             }
             TocksEvent::AudioDataReceived(_, _, _) => {
                 // This should be handled by the above layer
-                unreachable!();
+            }
+            TocksEvent::ChatReadTimeUpdated(account, chat_handle, timestamp) => {
+                self.accounts_storage
+                    .get(&account)
+                    .unwrap()
+                    .borrow_mut()
+                    .chat_from_chat_handle(&chat_handle)
+                    .unwrap()
+                    .borrow_mut()
+                    .set_last_read_time(timestamp);
             }
         }
     }
@@ -498,6 +420,7 @@ pub struct QmlUi {
     ui_handle: Option<JoinHandle<()>>,
     audio_manager: AudioManager,
     audio_handles: HashMap<(AccountId, ChatHandle), mpsc::UnboundedSender<AudioFrame>>,
+    notification: Option<NotificationHandle>,
     repeating_audio_handle: Option<RepeatingAudioHandle>,
     capture_channel: Option<mpsc::UnboundedReceiver<AudioFrame>>,
     tocks_event_rx: mpsc::UnboundedReceiver<TocksEvent>,
@@ -537,11 +460,17 @@ impl QmlUi {
 
             let mut engine = QmlEngine::new();
 
+            let icon_path = std::ffi::CString::new(ICON_PATH).unwrap();
+            let icon_path = icon_path.as_ptr();
+
+            unsafe {
+                cpp::cpp! ( [icon_path as "const char *"] {
+                    QApplication* app = qobject_cast<QApplication*>(QCoreApplication::instance());
+                    app->setWindowIcon(QIcon(icon_path));
+                })
+            }
+
             engine.set_object_property("tocks".into(), qtocks_pinned);
-            engine.set_object_property(
-                "chatModel".into(),
-                qtocks_pinned.borrow().chat_model.pinned(),
-            );
 
             // FIXME: bundle with qrc on release builds
             engine.load_file(concat!(env!("CARGO_MANIFEST_DIR"), "/qml/Tocks.qml").into());
@@ -565,6 +494,7 @@ impl QmlUi {
             ui_handle: Some(ui_handle),
             audio_manager,
             audio_handles: Default::default(),
+            notification: None,
             repeating_audio_handle: None,
             capture_channel: None,
             tocks_event_rx,
@@ -600,7 +530,9 @@ impl QmlUi {
                     self.handle_tocks_event(event);
                 }
                 event = self.qtocks_event_rx.next() => {
-                    self.handle_qtocks_event(event)
+                    if let Err(e) = self.handle_qtocks_event(event) {
+                        error!("Failed to handle qtocks event: {:?}", e);
+                    }
                 }
             }
         }
@@ -616,16 +548,39 @@ impl QmlUi {
         }
     }
 
-    fn handle_qtocks_event(&mut self, event: Option<QTocksEvent>) {
+    fn handle_qtocks_event(&mut self, event: Option<QTocksEvent>) -> Result<()> {
         match event {
             Some(QTocksEvent::SetAudioOutput(device)) => self.set_audio_output(device),
-            Some(QTocksEvent::PlayNotificationSound) => self.play_notification_sound(),
+            Some(QTocksEvent::SendNotification(title, message)) => {
+                self.notification = match self.notification.take() {
+                    Some(mut handle) => {
+                        handle
+                            .summary(&title)
+                            .icon(ICON_PATH)
+                            .body(&message);
+                        handle.update();
+                        Some(handle)
+
+                    }
+                    None => {
+                        Some(Notification::new()
+                            .appname("Tocks")
+                            .summary(&title)
+                            .icon(ICON_PATH)
+                            .body(&message)
+                            .show()?)
+                    }
+                };
+                self.play_notification_sound()
+            }
             Some(QTocksEvent::StartAudioTest) => self.start_audio_test(),
             Some(QTocksEvent::StopAudioTest) => self.stop_audio_test(),
             None => {
                 warn!("No QTocks event received");
             }
         }
+
+        Ok(())
     }
 
     fn handle_tocks_event(&mut self, event: TocksEvent) {

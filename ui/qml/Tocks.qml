@@ -6,6 +6,8 @@ import "Colors.js" as Colors
 ApplicationWindow {
     id: tocksWindow
 
+    property bool windowVisible: false
+
     title: "Tocks"
     visible: true
     width: 960
@@ -19,9 +21,8 @@ ApplicationWindow {
     color: Colors.background
 
     onActiveFocusControlChanged: {
-        tocks.visible = activeFocusControl !== null
+        tocksWindow.windowVisible = activeFocusControl !== null
     }
-
 
     Connections {
         target: tocks
@@ -48,6 +49,7 @@ ApplicationWindow {
     MainWindow {
         id: mainWindow
         visible: false
+        windowVisible: tocksWindow.windowVisible
 
         width: parent.width
         height: parent.height

@@ -1,0 +1,171 @@
+<svg version="1.1" baseProfile="full" width="1581.5" height="1146" viewbox="0 0 1581.5 1146" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:ev="http://www.w3.org/2001/xml-events" style="font:bold  12pt Helvetica, Helvetica, sans-serif;;stroke-linejoin:round;stroke-linecap:round">
+  <desc >[Tocks|
+Incoming signals|
+LoadMessages(account, chat, start, limit)
+SetLastReadTime(account, chat, timestamp)
+|
+Outgoing signals|
+MessagesLoaded(account, chat, messages)
+MessageInserted(account, chat, message)
+LastReadTime(account, chat, timestamp)
+]
+[Tocks] o- ..[Account]
+[Account] o- [Storage]
+[Storage] -- [DB Schema]
+
+[DB Schema|
+[chats|
+id: i64
+last_read: Timestamp (TEXT)]
+
+[messages|
+...
+timestamp: Timestamp (TEXT)]
+]
+[App] o- [Tocks]
+[App] o- [QmlClient]
+[QmlClient]
+[QmlClient] -- [Tocks]
+[QmlClient] o- [AudioManager]
+[QmlClient] o- [NotificationHandle]
+
+[QTocks|
+QML -&gt; Rust slots
+setLastReadTime(account, chat, timestamp)
+showNotification(title, body)
+playNotificationSound()
+]
+
+[QTocks] -- [QmlClient]
+[QTocks] o- [QAccount]
+[QAccount] o- [QFriend]
+[QFriend] o- [ChatModel]
+
+[ChatModel|
+* lastReadTime
+* chat content]
+
+
+[Qml|
+Note: Everything accessible to QTocks is accessible to QML|
+[Sidebar|
+Shows unread number beside each chat depending 
+on associated chat&apos;s chatmodel]
+[NotificationManager|
+When message is received construct the notification 
+and send it to rust
+* If window not foreground show notification and play sound
+* if window and chat are foreground do nothing
+* If window is foreground but chat not visible only play sound
+]
+[ChatRoom|
+Renders messages from chat model and notifies
+notification manager when last read time or chat
+content changes
+]
+]
+[Qml] -- [QTocks]
+</desc>
+  <rect x="0" y="0" height="1146" width="1581.5" style="stroke:none; fill:transparent;"></rect>
+  <text x="1259.6" y="781.5" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;">..</text>
+  <path d="M1276.5 745.2 L1276.5 746.5 L1276.5 789.5 L1276.5 789.5 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1281.8 735.8 L1276.5 745.2 L1271.2 735.8 L1276.5 726.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1276.5 839.2 L1276.5 863.5 L1276.5 883.5 L1276.5 883.5 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1281.8 829.8 L1276.5 839.2 L1271.2 829.8 L1276.5 820.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1276.5 914.5 L1276.5 934.5 L1276.5 954.5 L1276.5 954.5 " style="stroke:#33322E;fill:none;stroke-dasharray:6 6;stroke-width:3;"></path>
+  <path d="M1285.6 395.5 L1296.5 435.5 L1296.5 471 L1296.5 471 L1296.5 506.5 L1296.5 506.5 L1293.2 526.5 L1293.2 526.5 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1288.3 385.1 L1285.6 395.5 L1278 387.9 L1280.7 377.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1237 385.7 L1154 435.5 L1037.5 461 L1037.5 461 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1247.7 385.5 L1237 385.7 L1242.3 376.3 L1253 376.1 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1037.5 481 L1154 506.5 L1174.4 526.5 L1174.4 526.5 " style="stroke:#33322E;fill:none;stroke-dasharray:6 6;stroke-width:3;"></path>
+  <path d="M927.2 483.5 L809 506.5 L809 611 L809 611 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M937.4 487 L927.2 483.5 L935.3 476.5 L945.5 479.9 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M991.5 505.2 L991.5 506.5 L991.5 611 L991.5 611 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M996.8 495.8 L991.5 505.2 L986.2 495.8 L991.5 486.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M738.7 415.5 L758 435.5 L945.5 464 L945.5 464 " style="stroke:#33322E;fill:none;stroke-dasharray:6 6;stroke-width:3;"></path>
+  <path d="M667.5 433.5 L667 435.5 L667 455.5 L667 455.5 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M675.1 425.9 L667.5 433.5 L664.8 423.1 L672.4 415.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M667 505.2 L667 506.5 L667 611 L667 611 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M672.3 495.8 L667 505.2 L661.7 495.8 L667 486.5 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M667 660.7 L667 746.5 L667 766.5 L667 766.5 " style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M672.3 651.3 L667 660.7 L661.7 651.3 L667 642 Z" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M687 268.5 L687 288.5 L687 308.5 L687 308.5 " style="stroke:#33322E;fill:none;stroke-dasharray:6 6;stroke-width:3;"></path>
+  <rect x="1110.5" y="526.5" height="200" width="332" data-name="Tocks" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M1110.5 557.5 L1442.5 557.5" data-name="Tocks" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1110.5 588.5 L1442.5 588.5" data-name="Tocks" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1110.5 634.5 L1442.5 634.5" data-name="Tocks" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M1110.5 665.5 L1442.5 665.5" data-name="Tocks" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="1276.5" y="548" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="Tocks">Tocks</text>
+  <text x="1118.5" y="579" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">Incoming signals</text>
+  <text x="1118.5" y="610" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">LoadMessages(account, chat, start, limit)</text>
+  <text x="1118.5" y="625" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">SetLastReadTime(account, chat, timestamp)</text>
+  <text x="1118.5" y="656" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">Outgoing signals</text>
+  <text x="1118.5" y="687" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">MessagesLoaded(account, chat, messages)</text>
+  <text x="1118.5" y="702" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">MessageInserted(account, chat, message)</text>
+  <text x="1118.5" y="717" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Tocks">LastReadTime(account, chat, timestamp)</text>
+  <rect x="28.5" y="28.5" height="240" width="1317" data-name="Qml" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M28.5 59.5 L1345.5 59.5" data-name="Qml" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <path d="M28.5 90.5 L1345.5 90.5" data-name="Qml" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="687" y="50" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="Qml">Qml</text>
+  <text x="36.5" y="81" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Qml">Note: Everything accessible to QTocks is accessible to QML</text>
+  <rect x="56.5" y="141.5" height="77" width="381" data-name="Sidebar" style="stroke:#33322E;fill:#fdf6e3;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M56.5 172.5 L437.5 172.5" data-name="Sidebar" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="247" y="163" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="Sidebar">Sidebar</text>
+  <text x="64.5" y="194" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Sidebar">Shows unread number beside each chat depending</text>
+  <text x="64.5" y="209" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="Sidebar">on associated chat&apos;s chatmodel</text>
+  <rect x="477.5" y="118.5" height="122" width="442" data-name="NotificationManager" style="stroke:#33322E;fill:#fdf6e3;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M477.5 149.5 L919.5 149.5" data-name="NotificationManager" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="698.5" y="140" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="NotificationManager">NotificationManager</text>
+  <text x="485.5" y="171" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="NotificationManager">When message is received construct the notification</text>
+  <text x="485.5" y="186" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="NotificationManager">and send it to rust</text>
+  <text x="485.5" y="201" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="NotificationManager">* If window not foreground show notification and play sound</text>
+  <text x="485.5" y="216" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="NotificationManager">* if window and chat are foreground do nothing</text>
+  <text x="485.5" y="231" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="NotificationManager">* If window is foreground but chat not visible only play sound</text>
+  <rect x="959.5" y="133.5" height="92" width="358" data-name="ChatRoom" style="stroke:#33322E;fill:#fdf6e3;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M959.5 164.5 L1317.5 164.5" data-name="ChatRoom" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="1138.5" y="155" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="ChatRoom">ChatRoom</text>
+  <text x="967.5" y="186" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="ChatRoom">Renders messages from chat model and notifies</text>
+  <text x="967.5" y="201" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="ChatRoom">notification manager when last read time or chat</text>
+  <text x="967.5" y="216" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="ChatRoom">content changes</text>
+  <rect x="999.5" y="954.5" height="164" width="555" data-name="DB Schema" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M999.5 985.5 L1554.5 985.5" data-name="DB Schema" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="1277" y="976" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="DB Schema">DB Schema</text>
+  <rect x="1027.5" y="1013.5" height="77" width="225" data-name="chats" style="stroke:#33322E;fill:#fdf6e3;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M1027.5 1044.5 L1252.5 1044.5" data-name="chats" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="1140" y="1035" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="chats">chats</text>
+  <text x="1035.5" y="1066" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="chats">id: i64</text>
+  <text x="1035.5" y="1081" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="chats">last_read: Timestamp (TEXT)</text>
+  <rect x="1292.5" y="1013.5" height="77" width="234" data-name="messages" style="stroke:#33322E;fill:#fdf6e3;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M1292.5 1044.5 L1526.5 1044.5" data-name="messages" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="1409.5" y="1035" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="messages">messages</text>
+  <text x="1300.5" y="1066" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="messages">...</text>
+  <text x="1300.5" y="1081" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="messages">timestamp: Timestamp (TEXT)</text>
+  <rect x="522.5" y="308.5" height="107" width="329" data-name="QTocks" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M522.5 339.5 L851.5 339.5" data-name="QTocks" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="687" y="330" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="QTocks">QTocks</text>
+  <text x="530.5" y="361" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="QTocks">QML -&gt; Rust slots</text>
+  <text x="530.5" y="376" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="QTocks">setLastReadTime(account, chat, timestamp)</text>
+  <text x="530.5" y="391" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="QTocks">showNotification(title, body)</text>
+  <text x="530.5" y="406" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="QTocks">playNotificationSound()</text>
+  <rect x="604.5" y="766.5" height="77" width="125" data-name="ChatModel" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <path d="M604.5 797.5 L729.5 797.5" data-name="ChatModel" style="stroke:#33322E;fill:none;stroke-dasharray:none;stroke-width:3;"></path>
+  <text x="667" y="788" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="ChatModel">ChatModel</text>
+  <text x="612.5" y="819" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="ChatModel">* lastReadTime</text>
+  <text x="612.5" y="834" style="fill: #33322E;font:normal  12pt Helvetica, Helvetica, sans-serif;" data-name="ChatModel">* chat content</text>
+  <rect x="1236.5" y="789.5" height="31" width="80" data-name="Account" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="1276.5" y="811" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="Account">Account</text>
+  <rect x="1239.5" y="883.5" height="31" width="75" data-name="Storage" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="1277" y="905" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="Storage">Storage</text>
+  <rect x="1253.5" y="346.5" height="31" width="47" data-name="App" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="1277" y="368" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="App">App</text>
+  <rect x="945.5" y="455.5" height="31" width="92" data-name="QmlClient" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="991.5" y="477" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="QmlClient">QmlClient</text>
+  <rect x="745.5" y="611.5" height="31" width="127" data-name="AudioManager" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="809" y="633" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="AudioManager">AudioManager</text>
+  <rect x="912.5" y="611.5" height="31" width="158" data-name="NotificationHandle" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="991.5" y="633" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="NotificationHandle">NotificationHandle</text>
+  <rect x="621.5" y="455.5" height="31" width="92" data-name="QAccount" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="667.5" y="477" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="QAccount">QAccount</text>
+  <rect x="628.5" y="611.5" height="31" width="77" data-name="QFriend" style="stroke:#33322E;fill:#eee8d5;stroke-dasharray:none;stroke-width:3;"></rect>
+  <text x="667" y="633" style="fill: #33322E;font:bold  12pt Helvetica, Helvetica, sans-serif;text-anchor: middle;" data-name="QFriend">QFriend</text>
+</svg>
